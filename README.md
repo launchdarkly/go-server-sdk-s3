@@ -60,9 +60,19 @@ Objects must contain flag data in the same JSON or YAML document format used by 
 
 See ["Reading flags from a file"](https://docs.launchdarkly.com/sdk/features/flags-from-files) for a full description of the format. When multiple object keys are given, their contents are merged; by default a flag or segment key appearing in more than one object is an error, which can be changed with `DuplicateKeysHandling`.
 
+Flags produced from `flagValues` entries have version 0, which is fine for a one-shot in-memory snapshot.
+
+Prefer a single object per snapshot. Reads of multiple objects are sequential, so a publisher updating several objects concurrently can produce a mixed snapshot; if you use multiple objects, update them together and rely on the duplicate-keys check to catch overlap.
+
 ## Initialization semantics
 
 Data loaded from S3 is a snapshot: it has no FDv2 payload state, so the SDK treats it as "cached" data rather than "refreshed" (current) data. Flag evaluations serve the snapshot values immediately, but if data sources are configured, `MakeCustomClient` will keep waiting for a synchronizer to reach fresh data; if none can, it returns an initialization error even though the snapshot was applied. Applications using this initializer as an outage fallback should treat that error as a degraded-but-alive condition rather than a fatal one -- check `client.Initialized()`, which is true once the snapshot is applied.
+
+Because of these semantics, place this initializer last in the initializer chain, after any initializers that can deliver current data from LaunchDarkly.
+
+## Out of scope
+
+This library initializes once at startup. It does not watch S3 for changes or act as a synchronizer, it does not ask the SDK to persist the snapshot into a persistent store (`Persist` is always false), and it does not support the older FDv1 data system.
 
 ## Contributing
 
