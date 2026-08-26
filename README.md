@@ -60,6 +60,12 @@ Objects must contain flag data in the same JSON or YAML document format used by 
 
 See ["Reading flags from a file"](https://docs.launchdarkly.com/sdk/features/flags-from-files) for a full description of the format. When multiple object keys are given, their contents are merged; by default a flag or segment key appearing in more than one object is an error, which can be changed with `DuplicateKeysHandling`.
 
+Because this initializer's purpose is to provide a known-good fallback, it validates the data rather than applying whatever it finds:
+
+* A snapshot that contains no flags and no segments is rejected. A corrupted, truncated, or misproduced object therefore causes a loud fallthrough to the next data source instead of silently turning off every flag. This also means a misspelled top-level property (for example `"flagz"`) is caught.
+* Documents must be valid UTF-8.
+* A flag or segment whose embedded `key` property does not match the key it is defined under is rejected, as is a negative `version`.
+
 Flags produced from `flagValues` entries have version 0, which is fine for a one-shot in-memory snapshot.
 
 Prefer a single object per snapshot. Reads of multiple objects are sequential, so a publisher updating several objects concurrently can produce a mixed snapshot; if you use multiple objects, update them together and rely on the duplicate-keys check to catch overlap.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -72,6 +73,14 @@ func (s *s3DataInitializer) Fetch(
 	if err != nil {
 		return nil, false, err
 	}
+	if len(merged.Flags) == 0 && len(merged.Segments) == 0 {
+		// A snapshot with zero items is far more likely to be a corrupted or misproduced
+		// object than an intentional configuration, and applying it would silently turn
+		// off every flag. Refuse it so the SDK can fall back to another data source.
+		return nil, false, fmt.Errorf(
+			"object(s) in S3 bucket %q contained no flag or segment data; refusing to initialize from an empty snapshot",
+			s.bucket)
+	}
 	changeSet, err := s.makeChangeSet(merged)
 	if err != nil {
 		return nil, false, err
@@ -103,12 +112,47 @@ func (s *s3DataInitializer) readObject(
 		return document{}, fmt.Errorf("unable to read object %q from S3 bucket %q: %w",
 			objectKey, s.bucket, err)
 	}
+	if !utf8.Valid(rawData) {
+		return document{}, fmt.Errorf("object %q in S3 bucket %q is not valid UTF-8",
+			objectKey, s.bucket)
+	}
 	doc, err := parseDocument(rawData)
 	if err != nil {
 		return document{}, fmt.Errorf("error parsing object %q from S3 bucket %q: %w",
 			objectKey, s.bucket, err)
 	}
+	if err := validateDocument(doc); err != nil {
+		return document{}, fmt.Errorf("invalid data in object %q from S3 bucket %q: %w",
+			objectKey, s.bucket, err)
+	}
 	return doc, nil
+}
+
+// validateDocument applies checks that the shared file-data parsing does not: an item's embedded
+// key must match the key it is defined under, and versions must not be negative. Both indicate a
+// malformed or corrupted document that would misbehave later in evaluations or events.
+func validateDocument(doc document) error {
+	if doc.Flags != nil {
+		for key, f := range *doc.Flags {
+			if f.Key != key {
+				return fmt.Errorf("flag %q has a mismatched embedded key %q", key, f.Key)
+			}
+			if f.Version < 0 {
+				return fmt.Errorf("flag %q has a negative version %d", key, f.Version)
+			}
+		}
+	}
+	if doc.Segments != nil {
+		for key, seg := range *doc.Segments {
+			if seg.Key != key {
+				return fmt.Errorf("segment %q has a mismatched embedded key %q", key, seg.Key)
+			}
+			if seg.Version < 0 {
+				return fmt.Errorf("segment %q has a negative version %d", key, seg.Version)
+			}
+		}
+	}
+	return nil
 }
 
 // makeChangeSet expresses a merged data set as a full-transfer change set.

@@ -66,7 +66,9 @@ const (
 // DuplicateKeysHandling value behaves as DuplicateKeysFail.
 func merge(duplicateKeysHandling DuplicateKeysHandling, docs ...document) (mergeResult, error) {
 	var result mergeResult
-	seenKeys := map[itemCategory]map[string]bool{
+	// For each key already inserted, remember which document it came from, so that a duplicate
+	// can be reported as either a conflict within one object or a conflict between objects.
+	seenKeys := map[itemCategory]map[string]int{
 		flagCategory:    {},
 		segmentCategory: {},
 	}
@@ -76,25 +78,29 @@ func merge(duplicateKeysHandling DuplicateKeysHandling, docs ...document) (merge
 		category itemCategory,
 		key string,
 		data ldstoretypes.ItemDescriptor,
+		docIndex int,
 	) error {
-		if seenKeys[category][key] {
+		if firstDocIndex, found := seenKeys[category][key]; found {
 			switch duplicateKeysHandling {
 			case DuplicateKeysIgnoreAllButFirst:
 				return nil
 			default:
+				if firstDocIndex == docIndex {
+					return fmt.Errorf("%s '%s' is specified more than once in the same object", category, key)
+				}
 				return fmt.Errorf("%s '%s' is specified by multiple objects", category, key)
 			}
 		}
 		*items = append(*items, ldstoretypes.KeyedItemDescriptor{Key: key, Item: data})
-		seenKeys[category][key] = true
+		seenKeys[category][key] = docIndex
 		return nil
 	}
 
-	for _, d := range docs {
+	for i, d := range docs {
 		if d.Flags != nil {
 			for key, f := range *d.Flags {
 				data := ldstoretypes.ItemDescriptor{Version: f.Version, Item: &f}
-				if err := insert(&result.Flags, flagCategory, key, data); err != nil {
+				if err := insert(&result.Flags, flagCategory, key, data, i); err != nil {
 					return mergeResult{}, err
 				}
 			}
@@ -103,7 +109,7 @@ func merge(duplicateKeysHandling DuplicateKeysHandling, docs ...document) (merge
 			for key, value := range *d.FlagValues {
 				flag := makeFlagWithValue(key, value)
 				data := ldstoretypes.ItemDescriptor{Version: flag.Version, Item: flag}
-				if err := insert(&result.Flags, flagCategory, key, data); err != nil {
+				if err := insert(&result.Flags, flagCategory, key, data, i); err != nil {
 					return mergeResult{}, err
 				}
 			}
@@ -111,7 +117,7 @@ func merge(duplicateKeysHandling DuplicateKeysHandling, docs ...document) (merge
 		if d.Segments != nil {
 			for key, s := range *d.Segments {
 				data := ldstoretypes.ItemDescriptor{Version: s.Version, Item: &s}
-				if err := insert(&result.Segments, segmentCategory, key, data); err != nil {
+				if err := insert(&result.Segments, segmentCategory, key, data, i); err != nil {
 					return mergeResult{}, err
 				}
 			}
@@ -122,7 +128,7 @@ func merge(duplicateKeysHandling DuplicateKeysHandling, docs ...document) (merge
 
 // makeFlagWithValue expands a flag-key-to-value entry into a full flag definition that returns
 // the given value for every context.
-func makeFlagWithValue(key string, v interface{}) *ldmodel.FeatureFlag {
+func makeFlagWithValue(key string, v any) *ldmodel.FeatureFlag {
 	flag := ldbuilders.NewFlagBuilder(key).SingleVariation(ldvalue.CopyArbitraryValue(v)).Build()
 	return &flag
 }

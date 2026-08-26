@@ -228,6 +228,16 @@ func TestFetchFailsOnDuplicateKeysAcrossObjectsByDefault(t *testing.T) {
 	assert.Contains(t, err.Error(), "multiple objects")
 }
 
+func TestFetchFailsOnDuplicateKeyWithinOneObject(t *testing.T) {
+	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
+		"a.json": []byte(`{"flags": {"flag-a": {"key": "flag-a"}}, "flagValues": {"flag-a": 1}}`),
+	})}
+	err := fetchError(t, DataInitializer("my-bucket", "a.json").S3Client(fake))
+	assert.Contains(t, err.Error(), "flag-a")
+	assert.Contains(t, err.Error(), "same object")
+	assert.NotContains(t, err.Error(), "multiple objects")
+}
+
 func TestFetchCanIgnoreDuplicateKeys(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
 		"a.json": []byte(`{"flagValues": {"flag-a": 1}}`),
@@ -245,6 +255,24 @@ func TestFetchCanIgnoreDuplicateKeys(t *testing.T) {
 		"the first occurrence of a duplicated key should win")
 }
 
+func TestFetchRejectsDocumentsWithNoItems(t *testing.T) {
+	for name, data := range map[string][]byte{
+		"empty body":            {},
+		"whitespace only":       []byte("   \n   \n"),
+		"JSON null":             []byte(`null`),
+		"empty JSON object":     []byte(`{}`),
+		"empty properties":      []byte(`{"flags": {}, "flagValues": {}, "segments": {}}`),
+		"misspelled properties": []byte(`{"flagz": {"flag-a": {"key": "flag-a"}}}`),
+		"YAML null document":    []byte("null\n"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeS3Client{objects: map[string]fakeObject{"flags.json": {data: data}}}
+			err := fetchError(t, DataInitializer("my-bucket", "flags.json").S3Client(fake))
+			assert.Contains(t, err.Error(), "no flag or segment data")
+		})
+	}
+}
+
 func TestFetchRejectsDocumentsThatDoNotParse(t *testing.T) {
 	for name, data := range map[string][]byte{
 		"malformed JSON":  []byte(`{"flags": what}`),
@@ -252,6 +280,7 @@ func TestFetchRejectsDocumentsThatDoNotParse(t *testing.T) {
 		"HTML error page": []byte(`<html><body>503 Service Unavailable</body></html>`),
 		"YAML wrong type": []byte("flags: 3\n"),
 		"tab whitespace":  []byte("   \n\t  "),
+		"null flag entry": []byte(`{"flags": {"flag-a": null}}`),
 		"leading NBSP":    append([]byte{0xC2, 0xA0}, []byte(`{"flagValues": {"flag-a": 1}}`)...),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -260,6 +289,44 @@ func TestFetchRejectsDocumentsThatDoNotParse(t *testing.T) {
 			assert.Contains(t, err.Error(), "flags.json")
 		})
 	}
+}
+
+func TestFetchRejectsMismatchedItemKeys(t *testing.T) {
+	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
+		"flags.json": []byte(`{"flags": {"flag-a": {"key": "flag-b"}}}`),
+	})}
+	err := fetchError(t, DataInitializer("my-bucket", "flags.json").S3Client(fake))
+	assert.Contains(t, err.Error(), "flag-a")
+	assert.Contains(t, err.Error(), "mismatched")
+
+	fake = &fakeS3Client{objects: simpleObjects(map[string][]byte{
+		"flags.json": []byte(`{"segments": {"seg-a": {"key": "seg-b"}}}`),
+	})}
+	err = fetchError(t, DataInitializer("my-bucket", "flags.json").S3Client(fake))
+	assert.Contains(t, err.Error(), "seg-a")
+	assert.Contains(t, err.Error(), "mismatched")
+}
+
+func TestFetchRejectsNegativeVersions(t *testing.T) {
+	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
+		"flags.json": []byte(`{"flags": {"flag-a": {"key": "flag-a", "version": -1}}}`),
+	})}
+	err := fetchError(t, DataInitializer("my-bucket", "flags.json").S3Client(fake))
+	assert.Contains(t, err.Error(), "negative version")
+
+	fake = &fakeS3Client{objects: simpleObjects(map[string][]byte{
+		"flags.json": []byte(`{"segments": {"seg-a": {"key": "seg-a", "version": -2}}}`),
+	})}
+	err = fetchError(t, DataInitializer("my-bucket", "flags.json").S3Client(fake))
+	assert.Contains(t, err.Error(), "negative version")
+}
+
+func TestFetchRejectsInvalidUTF8(t *testing.T) {
+	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
+		"flags.json": append([]byte(`{"flagValues": {"fl`), 0xFF, 0xFE, '"', ':', '1', '}', '}'),
+	})}
+	err := fetchError(t, DataInitializer("my-bucket", "flags.json").S3Client(fake))
+	assert.Contains(t, err.Error(), "not valid UTF-8")
 }
 
 func TestFetchReturnsErrorForMissingObject(t *testing.T) {
