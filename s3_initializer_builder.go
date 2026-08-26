@@ -3,10 +3,19 @@ package lds3
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/launchdarkly/go-server-sdk/v7/subsystems"
+)
+
+const (
+	// DefaultMaxObjectSize is the default value for DataInitializerBuilder.MaxObjectSize: 100MB.
+	DefaultMaxObjectSize int64 = 100 * 1024 * 1024
+
+	// DefaultTimeout is the default value for DataInitializerBuilder.Timeout.
+	DefaultTimeout = 30 * time.Second
 )
 
 // S3Client is the subset of the AWS S3 client's operations that the data initializer uses.
@@ -46,6 +55,8 @@ type DataInitializerBuilder struct {
 	duplicateKeysHandling DuplicateKeysHandling
 	awsConfig             *aws.Config
 	client                S3Client
+	maxObjectSize         int64
+	timeout               time.Duration
 }
 
 // DataInitializer returns a configurable builder for an S3 data initializer.
@@ -59,6 +70,8 @@ func DataInitializer(bucket string, objectKeys ...string) *DataInitializerBuilde
 		bucket:                bucket,
 		objectKeys:            objectKeys,
 		duplicateKeysHandling: DuplicateKeysFail,
+		maxObjectSize:         DefaultMaxObjectSize,
+		timeout:               DefaultTimeout,
 	}
 }
 
@@ -98,6 +111,31 @@ func (b *DataInitializerBuilder) S3Client(client S3Client) *DataInitializerBuild
 	return b
 }
 
+// MaxObjectSize specifies the maximum size in bytes of a single object's flag data. The limit
+// applies to each object separately, and to the decompressed content if an object is compressed.
+// Reading stops with an error if an object exceeds it.
+//
+// The limit exists so that a misconfigured object key cannot make the SDK buffer an arbitrarily
+// large download during startup. If this is not specified, the default is [DefaultMaxObjectSize].
+// The value must be greater than zero.
+func (b *DataInitializerBuilder) MaxObjectSize(limit int64) *DataInitializerBuilder {
+	b.maxObjectSize = limit
+	return b
+}
+
+// Timeout specifies a time limit for the entire data-fetching operation, including reading every
+// configured object. If the limit is reached, the initializer fails and the SDK moves on to the
+// next initializer or synchronizer, instead of letting a slow S3 request consume the SDK's whole
+// initialization wait budget.
+//
+// If this is not specified, the default is [DefaultTimeout]. A value of zero disables the limit,
+// leaving the operation bounded only by the SDK's initialization context. The value must not be
+// negative.
+func (b *DataInitializerBuilder) Timeout(timeout time.Duration) *DataInitializerBuilder {
+	b.timeout = timeout
+	return b
+}
+
 // Build creates a DataInitializer instance that can be used by the SDK client.
 func (b *DataInitializerBuilder) Build(
 	clientContext subsystems.ClientContext,
@@ -107,6 +145,12 @@ func (b *DataInitializerBuilder) Build(
 	}
 	if len(b.objectKeys) == 0 {
 		return nil, errors.New("at least one object key is required")
+	}
+	if b.maxObjectSize <= 0 {
+		return nil, errors.New("maximum object size must be greater than zero")
+	}
+	if b.timeout < 0 {
+		return nil, errors.New("timeout must not be negative")
 	}
 	return newS3DataInitializer(clientContext, b), nil
 }

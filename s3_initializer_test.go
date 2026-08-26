@@ -2,18 +2,26 @@ package lds3
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"github.com/launchdarkly/go-server-sdk-evaluation/v3/ldmodel"
 	"github.com/launchdarkly/go-server-sdk/v7/subsystems"
 	"github.com/launchdarkly/go-server-sdk/v7/subsystems/ldstoretypes"
+
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -120,6 +128,16 @@ func itemKeys(items []ldstoretypes.KeyedItemDescriptor) []string {
 	return keys
 }
 
+func gzipCompress(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	_, err := gz.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, gz.Close())
+	return buf.Bytes()
+}
+
 func TestBuildRequiresBucketAndObjectKeys(t *testing.T) {
 	_, err := DataInitializer("", "key").Build(subsystems.BasicClientContext{})
 	assert.Error(t, err)
@@ -128,6 +146,21 @@ func TestBuildRequiresBucketAndObjectKeys(t *testing.T) {
 	assert.Error(t, err)
 
 	_, err = DataInitializer("bucket").ObjectKeys("key").Build(subsystems.BasicClientContext{})
+	assert.NoError(t, err)
+}
+
+func TestBuildValidatesMaxObjectSizeAndTimeout(t *testing.T) {
+	_, err := DataInitializer("bucket", "key").MaxObjectSize(0).Build(subsystems.BasicClientContext{})
+	assert.Error(t, err)
+
+	_, err = DataInitializer("bucket", "key").MaxObjectSize(-1).Build(subsystems.BasicClientContext{})
+	assert.Error(t, err)
+
+	_, err = DataInitializer("bucket", "key").Timeout(-time.Second).Build(subsystems.BasicClientContext{})
+	assert.Error(t, err)
+
+	_, err = DataInitializer("bucket", "key").MaxObjectSize(1024).Timeout(0).
+		Build(subsystems.BasicClientContext{})
 	assert.NoError(t, err)
 }
 
@@ -329,13 +362,100 @@ func TestFetchRejectsInvalidUTF8(t *testing.T) {
 	assert.Contains(t, err.Error(), "not valid UTF-8")
 }
 
+func TestFetchDecompressesGzipContentEncoding(t *testing.T) {
+	fake := &fakeS3Client{objects: map[string]fakeObject{
+		"flags.json.gz": {
+			data:            gzipCompress(t, []byte(`{"flagValues": {"gz-flag": true}}`)),
+			contentEncoding: "gzip",
+		},
+	}}
+	initializer := buildInitializer(t, DataInitializer("my-bucket", "flags.json.gz").S3Client(fake))
+	basis := fetchBasis(t, initializer)
+
+	flags := collectionByKind(t, basis, "features")
+	assert.Equal(t, []string{"gz-flag"}, itemKeys(flags))
+}
+
+func TestFetchRejectsGzipDataWithoutContentEncoding(t *testing.T) {
+	fake := &fakeS3Client{objects: map[string]fakeObject{
+		"flags.json.gz": {data: gzipCompress(t, []byte(`{"flagValues": {"gz-flag": true}}`))},
+	}}
+	err := fetchError(t, DataInitializer("my-bucket", "flags.json.gz").S3Client(fake))
+	assert.Contains(t, err.Error(), "gzip-compressed")
+	assert.Contains(t, err.Error(), "Content-Encoding")
+}
+
+func TestFetchRejectsObjectOverSizeLimitByContentLength(t *testing.T) {
+	fake := &fakeS3Client{objects: map[string]fakeObject{
+		"flags.json": {
+			data:          []byte(`{"flagValues": {"flag-a": 1}}`),
+			contentLength: aws.Int64(200),
+		},
+	}}
+	err := fetchError(t, DataInitializer("my-bucket", "flags.json").MaxObjectSize(100).S3Client(fake))
+	assert.Contains(t, err.Error(), "exceeds")
+	assert.Contains(t, err.Error(), "MaxObjectSize")
+}
+
+func TestFetchRejectsObjectOverSizeLimitWithUnderstatedContentLength(t *testing.T) {
+	bigData := append([]byte(`{"flagValues": {"flag-a": "`),
+		append(bytes.Repeat([]byte{'x'}, 200), []byte(`"}}`)...)...)
+	fake := &fakeS3Client{objects: map[string]fakeObject{
+		"flags.json": {data: bigData, contentLength: aws.Int64(10)},
+	}}
+	err := fetchError(t, DataInitializer("my-bucket", "flags.json").MaxObjectSize(100).S3Client(fake))
+	assert.Contains(t, err.Error(), "exceeds")
+}
+
+func TestFetchRejectsGzipObjectWhoseDecompressedContentExceedsLimit(t *testing.T) {
+	document := append([]byte(`{"flagValues": {"flag-a": "`),
+		append(bytes.Repeat([]byte{'x'}, 2048), []byte(`"}}`)...)...)
+	fake := &fakeS3Client{objects: map[string]fakeObject{
+		"flags.json.gz": {data: gzipCompress(t, document), contentEncoding: "gzip"},
+	}}
+	err := fetchError(t,
+		DataInitializer("my-bucket", "flags.json.gz").MaxObjectSize(1024).S3Client(fake))
+	assert.Contains(t, err.Error(), "exceeds")
+}
+
+func TestFetchAcceptsObjectWithinRaisedSizeLimit(t *testing.T) {
+	data := []byte(`{"flagValues": {"flag-a": 1}}`)
+	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{"flags.json": data})}
+	initializer := buildInitializer(t,
+		DataInitializer("my-bucket", "flags.json").MaxObjectSize(int64(len(data))).S3Client(fake))
+	basis := fetchBasis(t, initializer)
+	assert.Equal(t, []string{"flag-a"}, itemKeys(collectionByKind(t, basis, "features")))
+}
+
 func TestFetchReturnsErrorForMissingObject(t *testing.T) {
 	fake := &fakeS3Client{objects: map[string]fakeObject{}}
 	err := fetchError(t, DataInitializer("my-bucket", "missing.json").S3Client(fake))
 	assert.Contains(t, err.Error(), "missing.json")
 	assert.Contains(t, err.Error(), "my-bucket")
+	assert.Contains(t, err.Error(), "skipped")
 	var noSuchKey *types.NoSuchKey
 	assert.ErrorAs(t, err, &noSuchKey)
+}
+
+func TestFetchDescribesCommonS3ErrorClasses(t *testing.T) {
+	accessDenied := &smithy.GenericAPIError{Code: "AccessDenied", Message: "Access Denied"}
+	err := fetchError(t, DataInitializer("my-bucket", "key").S3Client(&fakeS3Client{getErr: accessDenied}))
+	assert.Contains(t, err.Error(), "credentials")
+	var apiErr smithy.APIError
+	assert.ErrorAs(t, err, &apiErr)
+
+	redirect := &smithy.GenericAPIError{Code: "PermanentRedirect", Message: "moved"}
+	err = fetchError(t, DataInitializer("my-bucket", "key").S3Client(&fakeS3Client{getErr: redirect}))
+	assert.Contains(t, err.Error(), "region")
+
+	serverError := &awshttp.ResponseError{
+		ResponseError: &smithyhttp.ResponseError{
+			Response: &smithyhttp.Response{Response: &http.Response{StatusCode: 503}},
+			Err:      errors.New("service unavailable"),
+		},
+	}
+	err = fetchError(t, DataInitializer("my-bucket", "key").S3Client(&fakeS3Client{getErr: serverError}))
+	assert.Contains(t, err.Error(), "after retries")
 }
 
 type failingReader struct{}
@@ -357,4 +477,67 @@ func TestFetchReturnsErrorWhenBodyReadFails(t *testing.T) {
 	assert.Nil(t, basis)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "read failure")
+}
+
+// blockingClient blocks every GetObject call until the request context is done.
+type blockingClient struct{}
+
+func (c blockingClient) GetObject(
+	ctx context.Context, _ *s3.GetObjectInput, _ ...func(*s3.Options),
+) (*s3.GetObjectOutput, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestFetchTimeoutBoundsTheWholeOperation(t *testing.T) {
+	initializer := buildInitializer(t, DataInitializer("my-bucket", "key").
+		Timeout(20*time.Millisecond).
+		S3Client(blockingClient{}))
+
+	basis, _, err := initializer.Fetch(nil, context.Background())
+	assert.Nil(t, basis)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestFetchPreservesCallerCancellation(t *testing.T) {
+	initializer := buildInitializer(t, DataInitializer("my-bucket", "key").S3Client(blockingClient{}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	basis, _, err := initializer.Fetch(nil, ctx)
+	assert.Nil(t, basis)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// deadlineProbeClient records whether the request context had a deadline.
+type deadlineProbeClient struct {
+	hadDeadline bool
+}
+
+func (c *deadlineProbeClient) GetObject(
+	ctx context.Context, _ *s3.GetObjectInput, _ ...func(*s3.Options),
+) (*s3.GetObjectOutput, error) {
+	_, c.hadDeadline = ctx.Deadline()
+	data := []byte(`{"flagValues": {"flag-a": 1}}`)
+	return &s3.GetObjectOutput{
+		Body:          io.NopCloser(bytes.NewReader(data)),
+		ContentLength: aws.Int64(int64(len(data))),
+	}, nil
+}
+
+func TestFetchAppliesDefaultTimeoutAndZeroDisablesIt(t *testing.T) {
+	probe := &deadlineProbeClient{}
+	initializer := buildInitializer(t, DataInitializer("my-bucket", "key").S3Client(probe))
+	fetchBasis(t, initializer)
+	assert.True(t, probe.hadDeadline, "the default timeout should set a deadline")
+
+	probe = &deadlineProbeClient{}
+	initializer = buildInitializer(t, DataInitializer("my-bucket", "key").Timeout(0).S3Client(probe))
+	fetchBasis(t, initializer)
+	assert.False(t, probe.hadDeadline, "a zero timeout should leave the context unbounded")
 }

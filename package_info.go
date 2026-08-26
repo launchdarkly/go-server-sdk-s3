@@ -33,6 +33,9 @@
 // (environment variables, shared config files, and instance metadata). Use the builder's methods
 // to supply a custom aws.Config or a preconfigured client.
 //
-// The initializer validates what it fetches: documents must be valid UTF-8, and a snapshot
-// containing no flag or segment data is rejected rather than applied.
+// The initializer validates what it fetches: documents must be valid UTF-8, may be
+// gzip-compressed when the object's Content-Encoding says so, are limited to a configurable
+// maximum size, and a snapshot containing no flag or segment data is rejected rather than
+// applied. The whole fetch is bounded by a configurable timeout so that a slow S3 request
+// cannot consume the SDK's entire initialization wait budget.
 package lds3
