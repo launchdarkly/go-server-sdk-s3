@@ -244,7 +244,7 @@ func TestFetchCanIgnoreDuplicateKeys(t *testing.T) {
 		"b.json": []byte(`{"flagValues": {"flag-a": 2}}`),
 	})}
 	initializer := buildInitializer(t, DataInitializer("my-bucket", "a.json", "b.json").
-		DuplicateKeysHandling(DuplicateKeysIgnoreAllButFirst).
+		DuplicateKeysHandling(DuplicateKeysKeepFirst).
 		S3Client(fake))
 	basis := fetchBasis(t, initializer)
 

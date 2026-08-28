@@ -82,7 +82,7 @@ func merge(duplicateKeysHandling DuplicateKeysHandling, docs ...document) (merge
 	) error {
 		if firstDocIndex, found := seenKeys[category][key]; found {
 			switch duplicateKeysHandling {
-			case DuplicateKeysIgnoreAllButFirst:
+			case DuplicateKeysKeepFirst:
 				return nil
 			default:
 				if firstDocIndex == docIndex {
