@@ -103,7 +103,7 @@ func TestClientEvaluatesFlagsFromS3(t *testing.T) {
 
 	client, err := ld.MakeCustomClient("sdk-key", config, time.Second*5)
 	require.NotNil(t, client)
-	defer client.Close()
+	defer client.Close() //nolint:errcheck // Close errors are irrelevant to these assertions.
 	assert.ErrorIs(t, err, ld.ErrInitializationFailed,
 		"snapshot data cannot satisfy the 'refreshed' availability target")
 
@@ -133,7 +133,7 @@ func TestClientDefersToSynchronizerForFreshData(t *testing.T) {
 
 	client, err := ld.MakeCustomClient("sdk-key", config, time.Second*5)
 	require.NoError(t, err, "current data from the synchronizer should complete initialization")
-	defer client.Close()
+	defer client.Close() //nolint:errcheck // Close errors are irrelevant to these assertions.
 
 	reached := client.GetDataSourceStatusProvider().WaitFor(interfaces.DataSourceStateValid, time.Second*5)
 	require.True(t, reached, "timed out waiting for the data source to become valid")
@@ -162,7 +162,7 @@ func TestClientFallsThroughToNextInitializerOnFailure(t *testing.T) {
 
 	client, err := ld.MakeCustomClient("sdk-key", config, time.Second*5)
 	require.NotNil(t, client)
-	defer client.Close()
+	defer client.Close() //nolint:errcheck // Close errors are irrelevant to these assertions.
 	assert.ErrorIs(t, err, ld.ErrInitializationFailed,
 		"snapshot data cannot satisfy the 'refreshed' availability target")
 
