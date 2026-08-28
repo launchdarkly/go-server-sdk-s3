@@ -79,7 +79,7 @@ func merge(duplicateKeysHandling DuplicateKeysHandling, docs ...document) (merge
 	) error {
 		if seenKeys[category][key] {
 			switch duplicateKeysHandling {
-			case DuplicateKeysIgnoreAllButFirst:
+			case DuplicateKeysKeepFirst:
 				return nil
 			default:
 				return fmt.Errorf("%s '%s' is specified by multiple objects", category, key)
