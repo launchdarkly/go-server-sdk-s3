@@ -1,9 +1,9 @@
 package lds3
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"unicode"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
@@ -38,8 +38,9 @@ func parseDocument(rawData []byte) (document, error) {
 }
 
 func detectJSON(rawData []byte) bool {
-	// A valid JSON document for our purposes must be an object, i.e. it must start with '{'
-	return strings.HasPrefix(strings.TrimLeftFunc(string(rawData), unicode.IsSpace), "{")
+	// A valid JSON document for our purposes must be an object, i.e. it must start with '{'.
+	// TrimLeftFunc returns a subslice, so no copy of the data is made.
+	return bytes.HasPrefix(bytes.TrimLeftFunc(rawData, unicode.IsSpace), []byte("{"))
 }
 
 // mergeResult holds the merged items from one or more documents. Item values are

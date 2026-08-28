@@ -15,6 +15,7 @@ import (
 	"github.com/launchdarkly/go-server-sdk/v7/subsystems"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // These tests exercise the initializer through a real *s3.Client against a local HTTP server.
@@ -82,9 +83,45 @@ func TestRealClientReturnsTypedErrorForMissingObject(t *testing.T) {
 		DataInitializer(integrationBucket, "missing.json").S3Client(realS3Client(server)))
 
 	assert.Contains(t, err.Error(), "missing.json")
+	assert.Contains(t, err.Error(), "skipped")
 	var noSuchKey *types.NoSuchKey
 	assert.ErrorAs(t, err, &noSuchKey,
 		"the wrapped error should still match the typed AWS error")
+}
+
+func TestRealClientLoadsGzipObject(t *testing.T) {
+	server := startS3Server(t, map[string]fakeObject{
+		"flags.json.gz": {
+			data:            gzipCompress(t, []byte(`{"flagValues": {"gz-flag": 7}}`)),
+			contentEncoding: "gzip",
+		},
+	})
+	initializer := buildInitializer(t,
+		DataInitializer(integrationBucket, "flags.json.gz").S3Client(realS3Client(server)))
+	basis := fetchBasis(t, initializer)
+
+	assert.Equal(t, []string{"gz-flag"}, itemKeys(collectionByKind(t, basis, "features")))
+}
+
+func TestAWSConfigClientIsCreatedOnceAndReused(t *testing.T) {
+	server := startS3Server(t, simpleObjects(map[string][]byte{
+		"flags.json": []byte(`{"flagValues": {"cfg-flag": 1}}`),
+	}))
+	config := aws.Config{
+		Region:       "us-east-1",
+		Credentials:  testCredentials(),
+		BaseEndpoint: aws.String(server.URL),
+	}
+	initializer := buildInitializer(t,
+		DataInitializer(integrationBucket, "flags.json").AWSConfig(config))
+	impl := initializer.(*s3DataInitializer)
+
+	fetchBasis(t, initializer)
+	firstClient := impl.client
+	require.NotNil(t, firstClient)
+
+	fetchBasis(t, initializer)
+	assert.Same(t, firstClient, impl.client, "a second Fetch should reuse the client")
 }
 
 func TestAWSConfigCredentialFailureSurfaces(t *testing.T) {

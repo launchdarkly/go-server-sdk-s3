@@ -45,6 +45,22 @@ lds3.DataInitializer("my-bucket", "snapshot.json").AWSConfig(myAWSConfig)
 lds3.DataInitializer("my-bucket", "snapshot.json").S3Client(myS3Client)
 ```
 
+`S3Client` is the sanctioned way to use custom endpoints, path-style addressing, or local S3 stand-ins such as LocalStack or MinIO; the builder deliberately does not mirror the AWS SDK's endpoint options.
+
+Two safety limits apply and can be adjusted:
+
+```go
+// The whole fetch (all objects) must finish within this time; default 30s. The limit keeps a
+// slow S3 request from consuming the SDK's entire initialization wait budget. Zero disables it.
+lds3.DataInitializer("my-bucket", "snapshot.json").Timeout(10 * time.Second)
+
+// Each object's content (after decompression, if compressed) may be at most this many bytes;
+// default 100MB.
+lds3.DataInitializer("my-bucket", "snapshot.json").MaxObjectSize(500 * 1024 * 1024)
+```
+
+Objects may be gzip-compressed if their `Content-Encoding` metadata is set to `gzip`. An object that contains gzip data without that metadata is rejected with an explanatory error.
+
 ## Data format
 
 Objects must contain flag data in the same JSON or YAML document format used by the SDK's file data sources, with any combination of `flags`, `flagValues`, and `segments` properties:
