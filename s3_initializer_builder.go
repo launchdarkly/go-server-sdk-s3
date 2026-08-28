@@ -32,10 +32,10 @@ const (
 	// data loading should fail if keys are duplicated across objects. This is the default behavior.
 	DuplicateKeysFail DuplicateKeysHandling = "fail"
 
-	// DuplicateKeysIgnoreAllButFirst is an option for DataInitializerBuilder.DuplicateKeysHandling,
+	// DuplicateKeysKeepFirst is an option for DataInitializerBuilder.DuplicateKeysHandling,
 	// meaning that if keys are duplicated across objects the first occurrence will be used, in the
 	// order the object keys were given.
-	DuplicateKeysIgnoreAllButFirst DuplicateKeysHandling = "ignore"
+	DuplicateKeysKeepFirst DuplicateKeysHandling = "ignore"
 )
 
 // DataInitializerBuilder is a builder for configuring the S3 data initializer.
