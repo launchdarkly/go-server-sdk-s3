@@ -32,4 +32,7 @@
 // By default, the initializer creates an S3 client from the default AWS configuration sources
 // (environment variables, shared config files, and instance metadata). Use the builder's methods
 // to supply a custom aws.Config or a preconfigured client.
+//
+// The initializer validates what it fetches: documents must be valid UTF-8, and a snapshot
+// containing no flag or segment data is rejected rather than applied.
 package lds3
