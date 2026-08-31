@@ -12,6 +12,9 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # The first run creates the autorelease labels, which needs issues access.
+      # This permission can be removed after the labels exist.
+      issues: write
     steps:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
