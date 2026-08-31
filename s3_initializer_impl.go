@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -197,7 +198,15 @@ func (s *s3DataInitializer) readObject(
 
 // readLimited reads at most limit bytes, returning errObjectTooLarge if the reader holds more.
 func readLimited(reader io.Reader, limit int64) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	// Reading one byte past the limit distinguishes at-limit from over-limit, except when the
+	// limit is math.MaxInt64: there limit+1 would overflow to a negative value, which LimitReader
+	// treats as zero, silently reading every object as empty. No probe byte is possible or needed
+	// at that limit, since a reader cannot hold more than math.MaxInt64 bytes.
+	probe := limit + 1
+	if probe < 0 {
+		probe = math.MaxInt64
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, probe))
 	if err != nil {
 		return nil, err
 	}

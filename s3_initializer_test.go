@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"testing"
 	"time"
@@ -425,6 +426,29 @@ func TestFetchAcceptsObjectWithinRaisedSizeLimit(t *testing.T) {
 		DataInitializer("my-bucket", "flags.json").MaxObjectSize(int64(len(data))).S3Client(fake))
 	basis := fetchBasis(t, initializer)
 	assert.Equal(t, []string{"flag-a"}, itemKeys(collectionByKind(t, basis, "features")))
+}
+
+func TestFetchAcceptsObjectWhenMaxObjectSizeIsMaxInt64(t *testing.T) {
+	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
+		"flags.json": []byte(`{"flagValues": {"flag-a": 1}}`),
+	})}
+	initializer := buildInitializer(t,
+		DataInitializer("my-bucket", "flags.json").MaxObjectSize(math.MaxInt64).S3Client(fake))
+	basis := fetchBasis(t, initializer)
+	assert.Equal(t, []string{"flag-a"}, itemKeys(collectionByKind(t, basis, "features")))
+}
+
+func TestFetchRejectsObjectOneByteOverSizeLimit(t *testing.T) {
+	data := []byte(`{"flagValues": {"flag-a": 1}}`)
+	fake := &fakeS3Client{objects: map[string]fakeObject{
+		// The understated Content-Length bypasses the header pre-check, so the limit is
+		// enforced by counting the actual body bytes.
+		"flags.json": {data: data, contentLength: aws.Int64(1)},
+	}}
+	err := fetchError(t, DataInitializer("my-bucket", "flags.json").
+		MaxObjectSize(int64(len(data))-1).S3Client(fake))
+	assert.Contains(t, err.Error(), "exceeds")
+	assert.Contains(t, err.Error(), "MaxObjectSize")
 }
 
 func TestFetchReturnsErrorForMissingObject(t *testing.T) {
