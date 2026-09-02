@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/launchdarkly/go-server-sdk-s3/compare/v0.1.0...v0.1.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* prevent MaxObjectSize(math.MaxInt64) from reading every object as empty ([#8](https://github.com/launchdarkly/go-server-sdk-s3/issues/8)) ([867230e](https://github.com/launchdarkly/go-server-sdk-s3/commit/867230eff4eab498df479fc86b7c4ff05f374291))
+
 ## [0.1.0](https://github.com/launchdarkly/go-server-sdk-s3/compare/v0.0.1...v0.1.0) (2026-08-31)
 
 
