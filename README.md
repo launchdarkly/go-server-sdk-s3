@@ -88,7 +88,7 @@ Prefer a single object per snapshot. Reads of multiple objects are sequential, s
 
 ## Initialization semantics
 
-Data loaded from S3 is a snapshot: it has no FDv2 payload state, so the SDK treats it as "cached" data rather than "refreshed" (current) data. Flag evaluations serve the snapshot values immediately, but if data sources are configured, `MakeCustomClient` will keep waiting for a synchronizer to reach fresh data; if none can, it returns an initialization error even though the snapshot was applied. Applications using this initializer as an outage fallback should treat that error as a degraded-but-alive condition rather than a fatal one -- check `client.Initialized()`, which is true once the snapshot is applied.
+Data loaded from S3 is a snapshot: it has no FDv2 payload state, so the SDK treats it as "cached" data rather than "refreshed" (current) data. As of Go SDK 7.17, applied snapshot data completes initialization: `MakeCustomClient` succeeds, `client.Initialized()` is true, and flag evaluations serve the snapshot values, while any configured synchronizers keep trying for current data in the background. (On earlier SDK versions, `MakeCustomClient` kept waiting for a synchronizer to reach fresh data and returned an initialization error if none could, even though the snapshot was applied and evaluations served it.)
 
 Because of these semantics, place this initializer last in the initializer chain, after any initializers that can deliver current data from LaunchDarkly.
 
