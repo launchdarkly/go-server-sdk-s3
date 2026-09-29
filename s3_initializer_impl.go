@@ -189,6 +189,15 @@ func (s *s3DataInitializer) readObject(
 		return document{}, fmt.Errorf("error parsing object %q from S3 bucket %q: %w",
 			objectKey, s.bucket, err)
 	}
+	if doc.FlagValues != nil {
+		// The file data sources' simplified flag-key-to-value entries are not supported: this
+		// initializer consumes snapshots of real flag data, which express full definitions.
+		// Rejecting the section, rather than ignoring it as an unknown property, prevents a
+		// file written for the file data sources from silently losing flags.
+		return document{}, fmt.Errorf(
+			`object %q in S3 bucket %q contains a "flagValues" section, which is not supported; snapshots must contain full flag definitions`,
+			objectKey, s.bucket)
+	}
 	if err := validateDocument(doc); err != nil {
 		return document{}, fmt.Errorf("invalid data in object %q from S3 bucket %q: %w",
 			objectKey, s.bucket, err)

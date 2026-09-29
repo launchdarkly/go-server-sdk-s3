@@ -92,7 +92,7 @@ func fullTransferChangeSet(
 // serve the S3 data.
 func TestClientEvaluatesFlagsFromS3(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
-		"flags.json": []byte(`{"flagValues": {"bool-flag": true}}`),
+		"flags.json": []byte(`{"flags": {"bool-flag": {"key": "bool-flag", "version": 1, "on": true, "fallthrough": {"variation": 0}, "variations": [true, false]}}}`),
 	})}
 	config := ld.Config{
 		Events: ldcomponents.NoEvents(),
@@ -117,7 +117,7 @@ func TestClientEvaluatesFlagsFromS3(t *testing.T) {
 // current data; initialization then completes normally with the synchronizer's data.
 func TestClientDefersToSynchronizerForFreshData(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
-		"flags.json": []byte(`{"flagValues": {"bool-flag": false}}`),
+		"flags.json": []byte(`{"flags": {"bool-flag": {"key": "bool-flag", "version": 1, "on": true, "fallthrough": {"variation": 0}, "variations": [false, true]}}}`),
 	})}
 	synchronizerFlag := ldbuilders.NewFlagBuilder("bool-flag").Version(1).
 		SingleVariation(ldvalue.Bool(true)).Build()
@@ -150,7 +150,7 @@ func TestClientDefersToSynchronizerForFreshData(t *testing.T) {
 func TestClientFallsThroughToNextInitializerOnFailure(t *testing.T) {
 	failing := &fakeS3Client{objects: map[string]fakeObject{}}
 	good := &fakeS3Client{objects: simpleObjects(map[string][]byte{
-		"flags.json": []byte(`{"flagValues": {"bool-flag": true}}`),
+		"flags.json": []byte(`{"flags": {"bool-flag": {"key": "bool-flag", "version": 1, "on": true, "fallthrough": {"variation": 0}, "variations": [true, false]}}}`),
 	})}
 	config := ld.Config{
 		Events: ldcomponents.NoEvents(),

@@ -174,10 +174,8 @@ func TestFetchLoadsFlagsAndSegmentsFromJSON(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
 		"flags.json": []byte(`{
 			"flags": {
-				"flag1": {"key": "flag1", "version": 2, "on": true}
-			},
-			"flagValues": {
-				"flag2": "value2"
+				"flag1": {"key": "flag1", "version": 2, "on": true},
+				"flag2": {"key": "flag2", "version": 1, "variations": ["value2"]}
 			},
 			"segments": {
 				"seg1": {"key": "seg1", "version": 3}
@@ -200,7 +198,6 @@ func TestFetchLoadsFlagsAndSegmentsFromJSON(t *testing.T) {
 		if item.Key == "flag1" {
 			assert.Equal(t, 2, flag.Version)
 		} else {
-			// flag2 came from a flagValues entry, expanded into a flag returning that value
 			assert.Equal(t, []ldvalue.Value{ldvalue.String("value2")}, flag.Variations)
 		}
 	}
@@ -215,7 +212,7 @@ func TestFetchLoadsFlagsAndSegmentsFromJSON(t *testing.T) {
 
 func TestFetchLoadsYAML(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
-		"flags.yaml": []byte("flagValues:\n  yaml-flag: 3\n"),
+		"flags.yaml": []byte("flags:\n  yaml-flag:\n    key: yaml-flag\n"),
 	})}
 	initializer := buildInitializer(t, DataInitializer("my-bucket", "flags.yaml").S3Client(fake))
 	basis := fetchBasis(t, initializer)
@@ -227,7 +224,7 @@ func TestFetchLoadsYAML(t *testing.T) {
 
 func TestFetchAllowsUnknownTopLevelProperties(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
-		"flags.json": []byte(`{"flagValues": {"flag-a": 1}, "metadata": {"generatedAt": "sometime"}}`),
+		"flags.json": []byte(`{"flags": {"flag-a": {"key": "flag-a"}}, "metadata": {"generatedAt": "sometime"}}`),
 	})}
 	initializer := buildInitializer(t, DataInitializer("my-bucket", "flags.json").S3Client(fake))
 	basis := fetchBasis(t, initializer)
@@ -238,8 +235,8 @@ func TestFetchAllowsUnknownTopLevelProperties(t *testing.T) {
 
 func TestFetchMergesMultipleObjects(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
-		"a.json": []byte(`{"flagValues": {"flag-a": 1}}`),
-		"b.json": []byte(`{"flagValues": {"flag-b": 2}}`),
+		"a.json": []byte(`{"flags": {"flag-a": {"key": "flag-a"}}}`),
+		"b.json": []byte(`{"flags": {"flag-b": {"key": "flag-b"}}}`),
 	})}
 	initializer := buildInitializer(t, DataInitializer("my-bucket", "a.json", "b.json").S3Client(fake))
 	basis := fetchBasis(t, initializer)
@@ -254,28 +251,34 @@ func TestFetchMergesMultipleObjects(t *testing.T) {
 
 func TestFetchFailsOnDuplicateKeysAcrossObjectsByDefault(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
-		"a.json": []byte(`{"flagValues": {"flag-a": 1}}`),
-		"b.json": []byte(`{"flagValues": {"flag-a": 2}}`),
+		"a.json": []byte(`{"flags": {"flag-a": {"key": "flag-a", "version": 1}}}`),
+		"b.json": []byte(`{"flags": {"flag-a": {"key": "flag-a", "version": 2}}}`),
 	})}
 	err := fetchError(t, DataInitializer("my-bucket", "a.json", "b.json").S3Client(fake))
 	assert.Contains(t, err.Error(), "flag-a")
 	assert.Contains(t, err.Error(), "multiple objects")
 }
 
-func TestFetchFailsOnDuplicateKeyWithinOneObject(t *testing.T) {
-	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
-		"a.json": []byte(`{"flags": {"flag-a": {"key": "flag-a"}}, "flagValues": {"flag-a": 1}}`),
-	})}
-	err := fetchError(t, DataInitializer("my-bucket", "a.json").S3Client(fake))
-	assert.Contains(t, err.Error(), "flag-a")
-	assert.Contains(t, err.Error(), "same object")
-	assert.NotContains(t, err.Error(), "multiple objects")
+func TestFetchRejectsFlagValuesSection(t *testing.T) {
+	for name, data := range map[string][]byte{
+		"flagValues only":       []byte(`{"flagValues": {"some-flag": true}}`),
+		"flagValues with flags": []byte(`{"flags": {"flag-a": {"key": "flag-a"}}, "flagValues": {"flag-b": 1}}`),
+		"empty flagValues":      []byte(`{"flags": {"flag-a": {"key": "flag-a"}}, "flagValues": {}}`),
+		"YAML flagValues":       []byte("flagValues:\n  some-flag: true\n"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeS3Client{objects: map[string]fakeObject{"flags.json": {data: data}}}
+			err := fetchError(t, DataInitializer("my-bucket", "flags.json").S3Client(fake))
+			assert.Contains(t, err.Error(), `"flagValues" section`)
+			assert.Contains(t, err.Error(), "not supported")
+		})
+	}
 }
 
 func TestFetchCanIgnoreDuplicateKeys(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
-		"a.json": []byte(`{"flagValues": {"flag-a": 1}}`),
-		"b.json": []byte(`{"flagValues": {"flag-a": 2}}`),
+		"a.json": []byte(`{"flags": {"flag-a": {"key": "flag-a", "version": 1}}}`),
+		"b.json": []byte(`{"flags": {"flag-a": {"key": "flag-a", "version": 2}}}`),
 	})}
 	initializer := buildInitializer(t, DataInitializer("my-bucket", "a.json", "b.json").
 		DuplicateKeysHandling(DuplicateKeysKeepFirst).
@@ -284,8 +287,7 @@ func TestFetchCanIgnoreDuplicateKeys(t *testing.T) {
 
 	flags := collectionByKind(t, basis, "features")
 	require.Len(t, flags, 1)
-	flag := flags[0].Item.Item.(*ldmodel.FeatureFlag)
-	assert.Equal(t, []ldvalue.Value{ldvalue.Int(1)}, flag.Variations,
+	assert.Equal(t, 1, flags[0].Item.Version,
 		"the first occurrence of a duplicated key should win")
 }
 
@@ -295,7 +297,7 @@ func TestFetchRejectsDocumentsWithNoItems(t *testing.T) {
 		"whitespace only":       []byte("   \n   \n"),
 		"JSON null":             []byte(`null`),
 		"empty JSON object":     []byte(`{}`),
-		"empty properties":      []byte(`{"flags": {}, "flagValues": {}, "segments": {}}`),
+		"empty properties":      []byte(`{"flags": {}, "segments": {}}`),
 		"misspelled properties": []byte(`{"flagz": {"flag-a": {"key": "flag-a"}}}`),
 		"YAML null document":    []byte("null\n"),
 	} {
@@ -315,7 +317,7 @@ func TestFetchRejectsDocumentsThatDoNotParse(t *testing.T) {
 		"YAML wrong type": []byte("flags: 3\n"),
 		"tab whitespace":  []byte("   \n\t  "),
 		"null flag entry": []byte(`{"flags": {"flag-a": null}}`),
-		"leading NBSP":    append([]byte{0xC2, 0xA0}, []byte(`{"flagValues": {"flag-a": 1}}`)...),
+		"leading NBSP":    append([]byte{0xC2, 0xA0}, []byte(`{"flags": {"flag-a": {"key": "flag-a"}}}`)...),
 	} {
 		t.Run(name, func(t *testing.T) {
 			fake := &fakeS3Client{objects: map[string]fakeObject{"flags.json": {data: data}}}
@@ -357,7 +359,7 @@ func TestFetchRejectsNegativeVersions(t *testing.T) {
 
 func TestFetchRejectsInvalidUTF8(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
-		"flags.json": append([]byte(`{"flagValues": {"fl`), 0xFF, 0xFE, '"', ':', '1', '}', '}'),
+		"flags.json": append([]byte(`{"flags": {"fl`), 0xFF, 0xFE, '"', ':', '1', '}', '}'),
 	})}
 	err := fetchError(t, DataInitializer("my-bucket", "flags.json").S3Client(fake))
 	assert.Contains(t, err.Error(), "not valid UTF-8")
@@ -366,7 +368,7 @@ func TestFetchRejectsInvalidUTF8(t *testing.T) {
 func TestFetchDecompressesGzipContentEncoding(t *testing.T) {
 	fake := &fakeS3Client{objects: map[string]fakeObject{
 		"flags.json.gz": {
-			data:            gzipCompress(t, []byte(`{"flagValues": {"gz-flag": true}}`)),
+			data:            gzipCompress(t, []byte(`{"flags": {"gz-flag": {"key": "gz-flag"}}}`)),
 			contentEncoding: "gzip",
 		},
 	}}
@@ -379,7 +381,7 @@ func TestFetchDecompressesGzipContentEncoding(t *testing.T) {
 
 func TestFetchRejectsGzipDataWithoutContentEncoding(t *testing.T) {
 	fake := &fakeS3Client{objects: map[string]fakeObject{
-		"flags.json.gz": {data: gzipCompress(t, []byte(`{"flagValues": {"gz-flag": true}}`))},
+		"flags.json.gz": {data: gzipCompress(t, []byte(`{"flags": {"gz-flag": {"key": "gz-flag"}}}`))},
 	}}
 	err := fetchError(t, DataInitializer("my-bucket", "flags.json.gz").S3Client(fake))
 	assert.Contains(t, err.Error(), "gzip-compressed")
@@ -389,7 +391,7 @@ func TestFetchRejectsGzipDataWithoutContentEncoding(t *testing.T) {
 func TestFetchRejectsObjectOverSizeLimitByContentLength(t *testing.T) {
 	fake := &fakeS3Client{objects: map[string]fakeObject{
 		"flags.json": {
-			data:          []byte(`{"flagValues": {"flag-a": 1}}`),
+			data:          []byte(`{"flags": {"flag-a": {"key": "flag-a"}}}`),
 			contentLength: aws.Int64(200),
 		},
 	}}
@@ -399,8 +401,8 @@ func TestFetchRejectsObjectOverSizeLimitByContentLength(t *testing.T) {
 }
 
 func TestFetchRejectsObjectOverSizeLimitWithUnderstatedContentLength(t *testing.T) {
-	bigData := append([]byte(`{"flagValues": {"flag-a": "`),
-		append(bytes.Repeat([]byte{'x'}, 200), []byte(`"}}`)...)...)
+	bigData := append([]byte(`{"flags": {"flag-a": {"key": "flag-a"}}, "padding": "`),
+		append(bytes.Repeat([]byte{'x'}, 200), []byte(`"}`)...)...)
 	fake := &fakeS3Client{objects: map[string]fakeObject{
 		"flags.json": {data: bigData, contentLength: aws.Int64(10)},
 	}}
@@ -409,8 +411,8 @@ func TestFetchRejectsObjectOverSizeLimitWithUnderstatedContentLength(t *testing.
 }
 
 func TestFetchRejectsGzipObjectWhoseDecompressedContentExceedsLimit(t *testing.T) {
-	document := append([]byte(`{"flagValues": {"flag-a": "`),
-		append(bytes.Repeat([]byte{'x'}, 2048), []byte(`"}}`)...)...)
+	document := append([]byte(`{"flags": {"flag-a": {"key": "flag-a"}}, "padding": "`),
+		append(bytes.Repeat([]byte{'x'}, 2048), []byte(`"}`)...)...)
 	fake := &fakeS3Client{objects: map[string]fakeObject{
 		"flags.json.gz": {data: gzipCompress(t, document), contentEncoding: "gzip"},
 	}}
@@ -420,7 +422,7 @@ func TestFetchRejectsGzipObjectWhoseDecompressedContentExceedsLimit(t *testing.T
 }
 
 func TestFetchAcceptsObjectWithinRaisedSizeLimit(t *testing.T) {
-	data := []byte(`{"flagValues": {"flag-a": 1}}`)
+	data := []byte(`{"flags": {"flag-a": {"key": "flag-a"}}}`)
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{"flags.json": data})}
 	initializer := buildInitializer(t,
 		DataInitializer("my-bucket", "flags.json").MaxObjectSize(int64(len(data))).S3Client(fake))
@@ -430,7 +432,7 @@ func TestFetchAcceptsObjectWithinRaisedSizeLimit(t *testing.T) {
 
 func TestFetchAcceptsObjectWhenMaxObjectSizeIsMaxInt64(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
-		"flags.json": []byte(`{"flagValues": {"flag-a": 1}}`),
+		"flags.json": []byte(`{"flags": {"flag-a": {"key": "flag-a"}}}`),
 	})}
 	initializer := buildInitializer(t,
 		DataInitializer("my-bucket", "flags.json").MaxObjectSize(math.MaxInt64).S3Client(fake))
@@ -439,7 +441,7 @@ func TestFetchAcceptsObjectWhenMaxObjectSizeIsMaxInt64(t *testing.T) {
 }
 
 func TestFetchRejectsObjectOneByteOverSizeLimit(t *testing.T) {
-	data := []byte(`{"flagValues": {"flag-a": 1}}`)
+	data := []byte(`{"flags": {"flag-a": {"key": "flag-a"}}}`)
 	fake := &fakeS3Client{objects: map[string]fakeObject{
 		// The understated Content-Length bypasses the header pre-check, so the limit is
 		// enforced by counting the actual body bytes.
@@ -547,7 +549,7 @@ func (c *deadlineProbeClient) GetObject(
 	ctx context.Context, _ *s3.GetObjectInput, _ ...func(*s3.Options),
 ) (*s3.GetObjectOutput, error) {
 	_, c.hadDeadline = ctx.Deadline()
-	data := []byte(`{"flagValues": {"flag-a": 1}}`)
+	data := []byte(`{"flags": {"flag-a": {"key": "flag-a"}}}`)
 	return &s3.GetObjectOutput{
 		Body:          io.NopCloser(bytes.NewReader(data)),
 		ContentLength: aws.Int64(int64(len(data))),

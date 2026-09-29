@@ -7,7 +7,6 @@ import (
 	"unicode"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
-	"github.com/launchdarkly/go-server-sdk-evaluation/v3/ldbuilders"
 	"github.com/launchdarkly/go-server-sdk-evaluation/v3/ldmodel"
 	"github.com/launchdarkly/go-server-sdk/v7/subsystems/ldstoretypes"
 
@@ -15,8 +14,9 @@ import (
 )
 
 // document is the parsed form of a single data object. A document may contain full flag
-// definitions, simplified flag-key-to-value entries, and segment definitions. This is the same
-// format used by the SDK's file data sources.
+// definitions and segment definitions. This is the format used by the SDK's file data sources,
+// except that their simplified flag-key-to-value entries ("flagValues") are not supported. That
+// section is still parsed, only so that its presence can be rejected with a clear error.
 type document struct {
 	Flags      *map[string]ldmodel.FeatureFlag
 	FlagValues *map[string]ldvalue.Value
@@ -62,14 +62,14 @@ const (
 	segmentCategory itemCategory = "segment"
 )
 
-// merge combines the items of the given documents, expanding flag-value entries into full flag
-// definitions and applying the given duplicate-key handling. An unrecognized
-// DuplicateKeysHandling value behaves as DuplicateKeysFail.
+// merge combines the items of the given documents, applying the given duplicate-key handling.
+// An unrecognized DuplicateKeysHandling value behaves as DuplicateKeysFail. Duplicates within
+// one document are not possible, because JSON and YAML parsing collapses repeated keys.
 func merge(duplicateKeysHandling DuplicateKeysHandling, docs ...document) (mergeResult, error) {
 	var result mergeResult
-	// For each key already inserted, remember which document it came from, so that a duplicate
-	// can be reported as either a conflict within one object or a conflict between objects.
-	seenKeys := map[itemCategory]map[string]int{
+	// Track the keys already inserted, so that a key defined by more than one document can be
+	// detected.
+	seenKeys := map[itemCategory]map[string]bool{
 		flagCategory:    {},
 		segmentCategory: {},
 	}
@@ -79,38 +79,25 @@ func merge(duplicateKeysHandling DuplicateKeysHandling, docs ...document) (merge
 		category itemCategory,
 		key string,
 		data ldstoretypes.ItemDescriptor,
-		docIndex int,
 	) error {
-		if firstDocIndex, found := seenKeys[category][key]; found {
+		if seenKeys[category][key] {
 			switch duplicateKeysHandling {
 			case DuplicateKeysKeepFirst:
 				return nil
 			default:
-				if firstDocIndex == docIndex {
-					return fmt.Errorf("%s '%s' is specified more than once in the same object", category, key)
-				}
 				return fmt.Errorf("%s '%s' is specified by multiple objects", category, key)
 			}
 		}
 		*items = append(*items, ldstoretypes.KeyedItemDescriptor{Key: key, Item: data})
-		seenKeys[category][key] = docIndex
+		seenKeys[category][key] = true
 		return nil
 	}
 
-	for i, d := range docs {
+	for _, d := range docs {
 		if d.Flags != nil {
 			for key, f := range *d.Flags {
 				data := ldstoretypes.ItemDescriptor{Version: f.Version, Item: &f}
-				if err := insert(&result.Flags, flagCategory, key, data, i); err != nil {
-					return mergeResult{}, err
-				}
-			}
-		}
-		if d.FlagValues != nil {
-			for key, value := range *d.FlagValues {
-				flag := makeFlagWithValue(key, value)
-				data := ldstoretypes.ItemDescriptor{Version: flag.Version, Item: flag}
-				if err := insert(&result.Flags, flagCategory, key, data, i); err != nil {
+				if err := insert(&result.Flags, flagCategory, key, data); err != nil {
 					return mergeResult{}, err
 				}
 			}
@@ -118,18 +105,11 @@ func merge(duplicateKeysHandling DuplicateKeysHandling, docs ...document) (merge
 		if d.Segments != nil {
 			for key, s := range *d.Segments {
 				data := ldstoretypes.ItemDescriptor{Version: s.Version, Item: &s}
-				if err := insert(&result.Segments, segmentCategory, key, data, i); err != nil {
+				if err := insert(&result.Segments, segmentCategory, key, data); err != nil {
 					return mergeResult{}, err
 				}
 			}
 		}
 	}
 	return result, nil
-}
-
-// makeFlagWithValue expands a flag-key-to-value entry into a full flag definition that returns
-// the given value for every context.
-func makeFlagWithValue(key string, v any) *ldmodel.FeatureFlag {
-	flag := ldbuilders.NewFlagBuilder(key).SingleVariation(ldvalue.CopyArbitraryValue(v)).Build()
-	return &flag
 }

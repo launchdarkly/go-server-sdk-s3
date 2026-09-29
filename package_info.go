@@ -26,8 +26,10 @@
 //	client, err := ld.MakeCustomClient("sdk-key", config, 5*time.Second)
 //
 // The objects must be in the same JSON or YAML document format that the SDK's file data sources
-// use, containing any combination of "flags", "flagValues", and "segments" properties. See the
-// SDK's ldfiledata package documentation for a description of the format.
+// use, containing any combination of "flags" and "segments" properties. The file data sources'
+// simplified "flagValues" entries are not supported; an object that contains a "flagValues"
+// section is rejected. See the SDK's ldfiledata package documentation for a description of the
+// format.
 //
 // By default, the initializer creates an S3 client from the default AWS configuration sources
 // (environment variables, shared config files, and instance metadata). Use the builder's methods
