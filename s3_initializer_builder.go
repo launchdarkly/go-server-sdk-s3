@@ -25,16 +25,19 @@ type S3Client interface {
 }
 
 // DuplicateKeysHandling is a parameter type used with DataInitializerBuilder.DuplicateKeysHandling.
+//
+// Deprecated: The initializer reads one object, so keys cannot be duplicated across objects.
 type DuplicateKeysHandling string
 
 const (
-	// DuplicateKeysFail is an option for DataInitializerBuilder.DuplicateKeysHandling, meaning that
-	// data loading should fail if keys are duplicated across objects. This is the default behavior.
+	// DuplicateKeysFail is an option for DataInitializerBuilder.DuplicateKeysHandling.
+	//
+	// Deprecated: The initializer reads one object, so this option has no effect.
 	DuplicateKeysFail DuplicateKeysHandling = "fail"
 
-	// DuplicateKeysKeepFirst is an option for DataInitializerBuilder.DuplicateKeysHandling,
-	// meaning that if keys are duplicated across objects the first occurrence will be used, in the
-	// order the object keys were given.
+	// DuplicateKeysKeepFirst is an option for DataInitializerBuilder.DuplicateKeysHandling.
+	//
+	// Deprecated: The initializer reads one object, so this option has no effect.
 	DuplicateKeysKeepFirst DuplicateKeysHandling = "ignore"
 )
 
@@ -50,33 +53,43 @@ const (
 //
 // You do not need to call the builder's Build method yourself; that will be done by the SDK.
 type DataInitializerBuilder struct {
-	bucket                string
-	objectKeys            []string
-	duplicateKeysHandling DuplicateKeysHandling
-	awsConfig             *aws.Config
-	client                S3Client
-	maxObjectSize         int64
-	timeout               time.Duration
+	bucket        string
+	objectKeys    []string
+	awsConfig     *aws.Config
+	client        S3Client
+	maxObjectSize int64
+	timeout       time.Duration
+}
+
+// DataInitializerForObject returns a configurable builder for an S3 data initializer.
+//
+// The bucket is the name of the S3 bucket to read from, and objectKey is the key of an object
+// within it, containing flag data in the SDK's file data source format.
+func DataInitializerForObject(bucket string, objectKey string) *DataInitializerBuilder {
+	return newDataInitializerBuilder(bucket, []string{objectKey})
 }
 
 // DataInitializer returns a configurable builder for an S3 data initializer.
 //
-// The bucket is the name of the S3 bucket to read from, and objectKeys are the keys of one or
-// more objects within it, each containing flag data in the SDK's file data source format. At
-// least one object key is required; additional keys may also be added with
-// [DataInitializerBuilder.ObjectKeys].
+// Deprecated: Use [DataInitializerForObject] instead. The initializer reads one object; when
+// more than one object key is given, only the first is used.
 func DataInitializer(bucket string, objectKeys ...string) *DataInitializerBuilder {
+	return newDataInitializerBuilder(bucket, objectKeys)
+}
+
+func newDataInitializerBuilder(bucket string, objectKeys []string) *DataInitializerBuilder {
 	return &DataInitializerBuilder{
-		bucket:                bucket,
-		objectKeys:            objectKeys,
-		duplicateKeysHandling: DuplicateKeysFail,
-		maxObjectSize:         DefaultMaxObjectSize,
-		timeout:               DefaultTimeout,
+		bucket:        bucket,
+		objectKeys:    objectKeys,
+		maxObjectSize: DefaultMaxObjectSize,
+		timeout:       DefaultTimeout,
 	}
 }
 
 // ObjectKeys adds keys of objects to read from the bucket, after any keys that were previously
 // specified.
+//
+// Deprecated: The initializer reads one object; keys after the first are ignored.
 func (b *DataInitializerBuilder) ObjectKeys(objectKeys ...string) *DataInitializerBuilder {
 	b.objectKeys = append(b.objectKeys, objectKeys...)
 	return b
@@ -85,12 +98,10 @@ func (b *DataInitializerBuilder) ObjectKeys(objectKeys ...string) *DataInitializ
 // DuplicateKeysHandling specifies how to handle flag or segment keys that are duplicated across
 // objects.
 //
-// If this is not specified, or if you set it to an unrecognized value, the default is
-// DuplicateKeysFail.
+// Deprecated: The initializer reads one object, so this option has no effect.
 func (b *DataInitializerBuilder) DuplicateKeysHandling(
-	duplicateKeysHandling DuplicateKeysHandling,
+	DuplicateKeysHandling,
 ) *DataInitializerBuilder {
-	b.duplicateKeysHandling = duplicateKeysHandling
 	return b
 }
 

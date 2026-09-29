@@ -28,7 +28,7 @@ config := ld.Config{
     DataSystem: ldcomponents.DataSystem().Custom().
         Initializers(
             ldcomponents.PollingDataSourceV2().AsInitializer(),
-            lds3.DataInitializer("my-bucket", "flags/snapshot.json"),
+            lds3.DataInitializerForObject("my-bucket", "flags/snapshot.json"),
         ).
         Synchronizers(ldcomponents.StreamingDataSourceV2()),
 }
@@ -39,10 +39,10 @@ By default, the S3 client is created from the default AWS configuration sources 
 
 ```go
 // With a specific AWS configuration:
-lds3.DataInitializer("my-bucket", "snapshot.json").AWSConfig(myAWSConfig)
+lds3.DataInitializerForObject("my-bucket", "snapshot.json").AWSConfig(myAWSConfig)
 
 // Or with a preconfigured client, e.g. for an S3-compatible service:
-lds3.DataInitializer("my-bucket", "snapshot.json").S3Client(myS3Client)
+lds3.DataInitializerForObject("my-bucket", "snapshot.json").S3Client(myS3Client)
 ```
 
 `S3Client` is the sanctioned way to use custom endpoints, path-style addressing, or local S3 stand-ins such as LocalStack or MinIO; the builder deliberately does not mirror the AWS SDK's endpoint options.
@@ -52,11 +52,11 @@ Two safety limits apply and can be adjusted:
 ```go
 // The whole fetch (all objects) must finish within this time; default 30s. The limit keeps a
 // slow S3 request from consuming the SDK's entire initialization wait budget. Zero disables it.
-lds3.DataInitializer("my-bucket", "snapshot.json").Timeout(10 * time.Second)
+lds3.DataInitializerForObject("my-bucket", "snapshot.json").Timeout(10 * time.Second)
 
 // Each object's content (after decompression, if compressed) may be at most this many bytes;
 // default 100MB.
-lds3.DataInitializer("my-bucket", "snapshot.json").MaxObjectSize(500 * 1024 * 1024)
+lds3.DataInitializerForObject("my-bucket", "snapshot.json").MaxObjectSize(500 * 1024 * 1024)
 ```
 
 Objects may be gzip-compressed if their `Content-Encoding` metadata is set to `gzip`. An object that contains gzip data without that metadata is rejected with an explanatory error.
@@ -79,7 +79,7 @@ Objects must contain flag data in the same JSON or YAML document format used by 
 }
 ```
 
-See ["Reading flags from a file"](https://docs.launchdarkly.com/sdk/features/flags-from-files) for a full description of the format. The file data sources' simplified `flagValues` entries are not supported: this initializer consumes snapshots of real flag data, which express full definitions, and an object that contains a `flagValues` section is rejected with an explanatory error. When multiple object keys are given, their contents are merged; by default a flag or segment key appearing in more than one object is an error, which can be changed with `DuplicateKeysHandling`.
+See ["Reading flags from a file"](https://docs.launchdarkly.com/sdk/features/flags-from-files) for a full description of the format. The file data sources' simplified `flagValues` entries are not supported: this initializer consumes snapshots of real flag data, which express full definitions, and an object that contains a `flagValues` section is rejected with an explanatory error.
 
 Because this initializer's purpose is to provide a known-good fallback, it validates the data rather than applying whatever it finds:
 
@@ -87,7 +87,7 @@ Because this initializer's purpose is to provide a known-good fallback, it valid
 * Documents must be valid UTF-8.
 * A flag or segment whose embedded `key` property does not match the key it is defined under is rejected, as is a negative `version`.
 
-Prefer a single object per snapshot. Reads of multiple objects are sequential, so a publisher updating several objects concurrently can produce a mixed snapshot; if you use multiple objects, update them together and rely on the duplicate-keys check to catch overlap.
+The initializer reads a single object per snapshot. Put the whole snapshot in one object, so a publisher cannot produce a mixed snapshot with concurrent updates.
 
 ## Initialization semantics
 
