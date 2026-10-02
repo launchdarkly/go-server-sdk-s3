@@ -22,8 +22,8 @@ import (
 )
 
 // These tests exercise the initializer through the full SDK client, verifying the initialization
-// semantics documented in the README: snapshot data has no selector, so its availability is
-// "cached" rather than "refreshed".
+// semantics documented in the README: snapshot data has no selector, and the SDK completes
+// initialization when an initializer supplies data without one.
 
 // fakeSynchronizer is a minimal DataSynchronizer that immediately delivers one change set.
 type fakeSynchronizer struct {
@@ -86,10 +86,8 @@ func fullTransferChangeSet(
 	return changeSet
 }
 
-// A snapshot has no selector, so its availability is "cached" rather than "refreshed"; when data
-// sources are configured, MakeCustomClient's target is "refreshed", so it reports
-// ErrInitializationFailed. The client is still usable: Initialized() is true and evaluations
-// serve the S3 data.
+// A snapshot has no selector, but applied initializer data completes initialization:
+// MakeCustomClient succeeds, Initialized() is true, and evaluations serve the S3 data.
 func TestClientEvaluatesFlagsFromS3(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
 		"flags.json": []byte(`{"flags": {"bool-flag": {"key": "bool-flag", "version": 1, "on": true, "fallthrough": {"variation": 0}, "variations": [true, false]}}}`),
@@ -104,8 +102,7 @@ func TestClientEvaluatesFlagsFromS3(t *testing.T) {
 	client, err := ld.MakeCustomClient("sdk-key", config, time.Second*5)
 	require.NotNil(t, client)
 	defer client.Close() //nolint:errcheck // Close errors are irrelevant to these assertions.
-	assert.ErrorIs(t, err, ld.ErrInitializationFailed,
-		"snapshot data cannot satisfy the 'refreshed' availability target")
+	assert.NoError(t, err, "selector-less initializer data completes initialization")
 
 	assert.True(t, client.Initialized())
 	value, err := client.BoolVariation("bool-flag", ldcontext.New("user-key"), false)
@@ -114,7 +111,7 @@ func TestClientEvaluatesFlagsFromS3(t *testing.T) {
 }
 
 // With a synchronizer configured, the S3 snapshot serves only until the synchronizer delivers
-// current data; initialization then completes normally with the synchronizer's data.
+// current data; the synchronizer's data then replaces the snapshot.
 func TestClientDefersToSynchronizerForFreshData(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
 		"flags.json": []byte(`{"flags": {"bool-flag": {"key": "bool-flag", "version": 1, "on": true, "fallthrough": {"variation": 0}, "variations": [false, true]}}}`),
@@ -132,15 +129,18 @@ func TestClientDefersToSynchronizerForFreshData(t *testing.T) {
 	}
 
 	client, err := ld.MakeCustomClient("sdk-key", config, time.Second*5)
-	require.NoError(t, err, "current data from the synchronizer should complete initialization")
+	require.NoError(t, err)
 	defer client.Close() //nolint:errcheck // Close errors are irrelevant to these assertions.
 
 	reached := client.GetDataSourceStatusProvider().WaitFor(interfaces.DataSourceStateValid, time.Second*5)
 	require.True(t, reached, "timed out waiting for the data source to become valid")
 
-	value, err := client.BoolVariation("bool-flag", ldcontext.New("user-key"), false)
-	assert.NoError(t, err)
-	assert.True(t, value, "the synchronizer's data should replace the S3 snapshot")
+	// Initialization completes on the snapshot alone, so the synchronizer's data can arrive
+	// after MakeCustomClient returns; wait for it to replace the snapshot value.
+	require.Eventually(t, func() bool {
+		value, err := client.BoolVariation("bool-flag", ldcontext.New("user-key"), false)
+		return err == nil && value
+	}, time.Second*5, time.Millisecond*10, "the synchronizer's data should replace the S3 snapshot")
 
 	assert.Equal(t, []getObjectRequest{{bucket: "my-bucket", key: "flags.json"}}, fake.requests,
 		"the S3 initializer should still have run first")
@@ -163,8 +163,7 @@ func TestClientFallsThroughToNextInitializerOnFailure(t *testing.T) {
 	client, err := ld.MakeCustomClient("sdk-key", config, time.Second*5)
 	require.NotNil(t, client)
 	defer client.Close() //nolint:errcheck // Close errors are irrelevant to these assertions.
-	assert.ErrorIs(t, err, ld.ErrInitializationFailed,
-		"snapshot data cannot satisfy the 'refreshed' availability target")
+	assert.NoError(t, err, "selector-less initializer data completes initialization")
 
 	assert.True(t, client.Initialized(), "the second initializer's data should have been applied")
 	value, err := client.BoolVariation("bool-flag", ldcontext.New("user-key"), false)
