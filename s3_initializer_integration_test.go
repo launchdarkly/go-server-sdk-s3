@@ -67,7 +67,7 @@ func realS3Client(server *httptest.Server) *s3.Client {
 
 func TestRealClientLoadsFlags(t *testing.T) {
 	server := startS3Server(t, simpleObjects(map[string][]byte{
-		"flags.json": []byte(`{"flagValues": {"real-flag": true}, "segments": {"seg1": {"key": "seg1"}}}`),
+		"flags.json": []byte(`{"flags": {"real-flag": {"key": "real-flag"}}, "segments": {"seg1": {"key": "seg1"}}}`),
 	}))
 	initializer := buildInitializer(t,
 		DataInitializer(integrationBucket, "flags.json").S3Client(realS3Client(server)))
@@ -92,7 +92,7 @@ func TestRealClientReturnsTypedErrorForMissingObject(t *testing.T) {
 func TestRealClientLoadsGzipObject(t *testing.T) {
 	server := startS3Server(t, map[string]fakeObject{
 		"flags.json.gz": {
-			data:            gzipCompress(t, []byte(`{"flagValues": {"gz-flag": 7}}`)),
+			data:            gzipCompress(t, []byte(`{"flags": {"gz-flag": {"key": "gz-flag"}}}`)),
 			contentEncoding: "gzip",
 		},
 	})
@@ -105,7 +105,7 @@ func TestRealClientLoadsGzipObject(t *testing.T) {
 
 func TestAWSConfigClientIsCreatedOnceAndReused(t *testing.T) {
 	server := startS3Server(t, simpleObjects(map[string][]byte{
-		"flags.json": []byte(`{"flagValues": {"cfg-flag": 1}}`),
+		"flags.json": []byte(`{"flags": {"cfg-flag": {"key": "cfg-flag"}}}`),
 	}))
 	config := aws.Config{
 		Region:       "us-east-1",
@@ -126,7 +126,7 @@ func TestAWSConfigClientIsCreatedOnceAndReused(t *testing.T) {
 
 func TestAWSConfigCredentialFailureSurfaces(t *testing.T) {
 	server := startS3Server(t, simpleObjects(map[string][]byte{
-		"flags.json": []byte(`{"flagValues": {"cfg-flag": 1}}`),
+		"flags.json": []byte(`{"flags": {"cfg-flag": {"key": "cfg-flag"}}}`),
 	}))
 	config := aws.Config{
 		Region: "us-east-1",
