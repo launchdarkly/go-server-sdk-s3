@@ -30,13 +30,12 @@ var gzipMagic = []byte{0x1f, 0x8b} //nolint:gochecknoglobals
 var errObjectTooLarge = errors.New("object content exceeds the size limit")
 
 type s3DataInitializer struct {
-	bucket                string
-	objectKeys            []string
-	duplicateKeysHandling DuplicateKeysHandling
-	awsConfig             *aws.Config
-	maxObjectSize         int64
-	timeout               time.Duration
-	loggers               ldlog.Loggers
+	bucket        string
+	objectKey     string
+	awsConfig     *aws.Config
+	maxObjectSize int64
+	timeout       time.Duration
+	loggers       ldlog.Loggers
 
 	clientMu sync.Mutex
 	client   S3Client
@@ -48,15 +47,19 @@ func newS3DataInitializer(
 ) *s3DataInitializer {
 	loggers := context.GetLogging().Loggers
 	loggers.SetPrefix("S3DataInitializer:")
+	if len(builder.objectKeys) > 1 {
+		loggers.Warnf(
+			"%d object keys were configured, but the S3 data initializer reads one object; only %q is used",
+			len(builder.objectKeys), builder.objectKeys[0])
+	}
 	return &s3DataInitializer{
-		bucket:                builder.bucket,
-		objectKeys:            builder.objectKeys,
-		duplicateKeysHandling: builder.duplicateKeysHandling,
-		awsConfig:             builder.awsConfig,
-		maxObjectSize:         builder.maxObjectSize,
-		timeout:               builder.timeout,
-		client:                builder.client,
-		loggers:               loggers,
+		bucket:        builder.bucket,
+		objectKey:     builder.objectKeys[0],
+		awsConfig:     builder.awsConfig,
+		maxObjectSize: builder.maxObjectSize,
+		timeout:       builder.timeout,
+		client:        builder.client,
+		loggers:       loggers,
 	}
 }
 
@@ -79,32 +82,25 @@ func (s *s3DataInitializer) Fetch(
 		return nil, false, err
 	}
 
-	docs := make([]document, 0, len(s.objectKeys))
-	for _, objectKey := range s.objectKeys {
-		doc, err := s.readObject(ctx, client, objectKey)
-		if err != nil {
-			return nil, false, err
-		}
-		docs = append(docs, doc)
-	}
-	merged, err := merge(s.duplicateKeysHandling, docs...)
+	doc, err := s.readObject(ctx, client, s.objectKey)
 	if err != nil {
 		return nil, false, err
 	}
-	if len(merged.Flags) == 0 && len(merged.Segments) == 0 {
+	items := documentItems(doc)
+	if len(items.Flags) == 0 && len(items.Segments) == 0 {
 		// A snapshot with zero items is far more likely to be a corrupted or misproduced
 		// object than an intentional configuration, and applying it would silently turn
 		// off every flag. Refuse it so the SDK can fall back to another data source.
 		return nil, false, fmt.Errorf(
-			"object(s) in S3 bucket %q contained no flag or segment data; refusing to initialize from an empty snapshot",
-			s.bucket)
+			"object %q in S3 bucket %q contained no flag or segment data; refusing to initialize from an empty snapshot",
+			s.objectKey, s.bucket)
 	}
-	changeSet, err := s.makeChangeSet(merged)
+	changeSet, err := s.makeChangeSet(items)
 	if err != nil {
 		return nil, false, err
 	}
-	s.loggers.Infof("Loaded %d flag(s) and %d segment(s) from %d object(s) in S3 bucket %s",
-		len(merged.Flags), len(merged.Segments), len(s.objectKeys), s.bucket)
+	s.loggers.Infof("Loaded %d flag(s) and %d segment(s) from object %q in S3 bucket %s",
+		len(items.Flags), len(items.Segments), s.objectKey, s.bucket)
 	return &subsystems.Basis{
 		ChangeSet: *changeSet,
 		Persist:   false,
@@ -279,8 +275,8 @@ func validateDocument(doc document) error {
 	return nil
 }
 
-// makeChangeSet expresses a merged data set as a full-transfer change set.
-func (s *s3DataInitializer) makeChangeSet(merged mergeResult) (*subsystems.ChangeSet, error) {
+// makeChangeSet expresses the document's items as a full-transfer change set.
+func (s *s3DataInitializer) makeChangeSet(merged documentItemsResult) (*subsystems.ChangeSet, error) {
 	intent := subsystems.ServerIntent{
 		Payload: subsystems.Payload{
 			ID:     "",

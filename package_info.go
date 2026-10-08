@@ -19,7 +19,7 @@
 //	    DataSystem: ldcomponents.DataSystem().Custom().
 //	        Initializers(
 //	            ldcomponents.PollingDataSourceV2().AsInitializer(),
-//	            lds3.DataInitializer("my-bucket", "flags/snapshot.json"),
+//	            lds3.DataInitializerForObject("my-bucket", "flags/snapshot.json"),
 //	        ).
 //	        Synchronizers(ldcomponents.StreamingDataSourceV2()),
 //	}

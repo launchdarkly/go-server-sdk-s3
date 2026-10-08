@@ -43,73 +43,32 @@ func detectJSON(rawData []byte) bool {
 	return bytes.HasPrefix(bytes.TrimLeftFunc(rawData, unicode.IsSpace), []byte("{"))
 }
 
-// mergeResult holds the merged items from one or more documents. Item values are
-// *ldmodel.FeatureFlag or *ldmodel.Segment.
-//
-// Ordering is deterministic at document granularity only: all of one document's items precede the
-// next document's, matching the order the documents were given, but the relative order of items
-// within a single document is unspecified. Consumers key items by their Key and must not rely on
-// within-document ordering.
-type mergeResult struct {
+// documentItemsResult holds a document's items as store descriptors. Item values are
+// *ldmodel.FeatureFlag or *ldmodel.Segment. The relative order of items is unspecified;
+// consumers key items by their Key.
+type documentItemsResult struct {
 	Flags    []ldstoretypes.KeyedItemDescriptor
 	Segments []ldstoretypes.KeyedItemDescriptor
 }
 
-type itemCategory string
-
-const (
-	flagCategory    itemCategory = "flag"
-	segmentCategory itemCategory = "segment"
-)
-
-// merge combines the items of the given documents, applying the given duplicate-key handling.
-// An unrecognized DuplicateKeysHandling value behaves as DuplicateKeysFail. Duplicates within
-// one document are not possible, because JSON and YAML parsing collapses repeated keys.
-func merge(duplicateKeysHandling DuplicateKeysHandling, docs ...document) (mergeResult, error) {
-	var result mergeResult
-	// Track the keys already inserted, so that a key defined by more than one document can be
-	// detected.
-	seenKeys := map[itemCategory]map[string]bool{
-		flagCategory:    {},
-		segmentCategory: {},
-	}
-
-	insert := func(
-		items *[]ldstoretypes.KeyedItemDescriptor,
-		category itemCategory,
-		key string,
-		data ldstoretypes.ItemDescriptor,
-	) error {
-		if seenKeys[category][key] {
-			switch duplicateKeysHandling {
-			case DuplicateKeysKeepFirst:
-				return nil
-			default:
-				return fmt.Errorf("%s '%s' is specified by multiple objects", category, key)
-			}
-		}
-		*items = append(*items, ldstoretypes.KeyedItemDescriptor{Key: key, Item: data})
-		seenKeys[category][key] = true
-		return nil
-	}
-
-	for _, d := range docs {
-		if d.Flags != nil {
-			for key, f := range *d.Flags {
-				data := ldstoretypes.ItemDescriptor{Version: f.Version, Item: &f}
-				if err := insert(&result.Flags, flagCategory, key, data); err != nil {
-					return mergeResult{}, err
-				}
-			}
-		}
-		if d.Segments != nil {
-			for key, s := range *d.Segments {
-				data := ldstoretypes.ItemDescriptor{Version: s.Version, Item: &s}
-				if err := insert(&result.Segments, segmentCategory, key, data); err != nil {
-					return mergeResult{}, err
-				}
-			}
+// documentItems converts a parsed document's definitions into store descriptors.
+func documentItems(doc document) documentItemsResult {
+	var result documentItemsResult
+	if doc.Flags != nil {
+		for key, f := range *doc.Flags {
+			result.Flags = append(result.Flags, ldstoretypes.KeyedItemDescriptor{
+				Key:  key,
+				Item: ldstoretypes.ItemDescriptor{Version: f.Version, Item: &f},
+			})
 		}
 	}
-	return result, nil
+	if doc.Segments != nil {
+		for key, s := range *doc.Segments {
+			result.Segments = append(result.Segments, ldstoretypes.KeyedItemDescriptor{
+				Key:  key,
+				Item: ldstoretypes.ItemDescriptor{Version: s.Version, Item: &s},
+			})
+		}
+	}
+	return result
 }

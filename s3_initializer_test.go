@@ -16,6 +16,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	"github.com/launchdarkly/go-sdk-common/v3/ldlog"
+	"github.com/launchdarkly/go-sdk-common/v3/ldlogtest"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"github.com/launchdarkly/go-server-sdk-evaluation/v3/ldmodel"
 	"github.com/launchdarkly/go-server-sdk/v7/subsystems"
@@ -140,13 +142,16 @@ func gzipCompress(t *testing.T, data []byte) []byte {
 }
 
 func TestBuildRequiresBucketAndObjectKeys(t *testing.T) {
-	_, err := DataInitializer("", "key").Build(subsystems.BasicClientContext{})
+	_, err := DataInitializerForObject("", "key").Build(subsystems.BasicClientContext{})
 	assert.Error(t, err)
 
 	_, err = DataInitializer("bucket").Build(subsystems.BasicClientContext{})
 	assert.Error(t, err)
 
 	_, err = DataInitializer("bucket").ObjectKeys("key").Build(subsystems.BasicClientContext{})
+	assert.NoError(t, err)
+
+	_, err = DataInitializerForObject("bucket", "key").Build(subsystems.BasicClientContext{})
 	assert.NoError(t, err)
 }
 
@@ -233,30 +238,40 @@ func TestFetchAllowsUnknownTopLevelProperties(t *testing.T) {
 	assert.Equal(t, []string{"flag-a"}, itemKeys(flags))
 }
 
-func TestFetchMergesMultipleObjects(t *testing.T) {
+func TestFetchWithNewConstructorLoadsTheObject(t *testing.T) {
+	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
+		"a.json": []byte(`{"flags": {"flag-a": {"key": "flag-a"}}}`),
+	})}
+	initializer := buildInitializer(t, DataInitializerForObject("my-bucket", "a.json").S3Client(fake))
+	basis := fetchBasis(t, initializer)
+
+	flags := collectionByKind(t, basis, "features")
+	assert.Equal(t, []string{"flag-a"}, itemKeys(flags))
+	assert.Equal(t, []getObjectRequest{{bucket: "my-bucket", key: "a.json"}}, fake.requests)
+}
+
+func TestDeprecatedMultiKeyPathsUseOnlyTheFirstKey(t *testing.T) {
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
 		"a.json": []byte(`{"flags": {"flag-a": {"key": "flag-a"}}}`),
 		"b.json": []byte(`{"flags": {"flag-b": {"key": "flag-b"}}}`),
 	})}
-	initializer := buildInitializer(t, DataInitializer("my-bucket", "a.json", "b.json").S3Client(fake))
+	mockLog := ldlogtest.NewMockLog()
+	clientContext := subsystems.BasicClientContext{
+		Logging: subsystems.LoggingConfiguration{Loggers: mockLog.Loggers},
+	}
+	initializer, err := DataInitializer("my-bucket", "a.json", "b.json").
+		ObjectKeys("c.json").
+		DuplicateKeysHandling(DuplicateKeysKeepFirst).
+		S3Client(fake).
+		Build(clientContext)
+	require.NoError(t, err)
 	basis := fetchBasis(t, initializer)
 
 	flags := collectionByKind(t, basis, "features")
-	assert.Equal(t, []string{"flag-a", "flag-b"}, itemKeys(flags))
-	assert.Equal(t, []getObjectRequest{
-		{bucket: "my-bucket", key: "a.json"},
-		{bucket: "my-bucket", key: "b.json"},
-	}, fake.requests)
-}
-
-func TestFetchFailsOnDuplicateKeysAcrossObjectsByDefault(t *testing.T) {
-	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
-		"a.json": []byte(`{"flags": {"flag-a": {"key": "flag-a", "version": 1}}}`),
-		"b.json": []byte(`{"flags": {"flag-a": {"key": "flag-a", "version": 2}}}`),
-	})}
-	err := fetchError(t, DataInitializer("my-bucket", "a.json", "b.json").S3Client(fake))
-	assert.Contains(t, err.Error(), "flag-a")
-	assert.Contains(t, err.Error(), "multiple objects")
+	assert.Equal(t, []string{"flag-a"}, itemKeys(flags))
+	assert.Equal(t, []getObjectRequest{{bucket: "my-bucket", key: "a.json"}}, fake.requests,
+		"only the first configured object key should be read")
+	mockLog.AssertMessageMatch(t, true, ldlog.Warn, "only \"a.json\" is used")
 }
 
 func TestFetchRejectsFlagValuesSection(t *testing.T) {
@@ -273,22 +288,6 @@ func TestFetchRejectsFlagValuesSection(t *testing.T) {
 			assert.Contains(t, err.Error(), "not supported")
 		})
 	}
-}
-
-func TestFetchCanIgnoreDuplicateKeys(t *testing.T) {
-	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{
-		"a.json": []byte(`{"flags": {"flag-a": {"key": "flag-a", "version": 1}}}`),
-		"b.json": []byte(`{"flags": {"flag-a": {"key": "flag-a", "version": 2}}}`),
-	})}
-	initializer := buildInitializer(t, DataInitializer("my-bucket", "a.json", "b.json").
-		DuplicateKeysHandling(DuplicateKeysKeepFirst).
-		S3Client(fake))
-	basis := fetchBasis(t, initializer)
-
-	flags := collectionByKind(t, basis, "features")
-	require.Len(t, flags, 1)
-	assert.Equal(t, 1, flags[0].Item.Version,
-		"the first occurrence of a duplicated key should win")
 }
 
 func TestFetchRejectsDocumentsWithNoItems(t *testing.T) {
