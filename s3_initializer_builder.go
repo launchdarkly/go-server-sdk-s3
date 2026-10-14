@@ -11,8 +11,14 @@ import (
 )
 
 const (
-	// DefaultMaxObjectSize is the default value for DataInitializerBuilder.MaxObjectSize: 100MB.
-	DefaultMaxObjectSize int64 = 100 * 1024 * 1024
+	// DefaultMaxObjectSizeBytes is the default value for DataInitializerBuilder.MaxObjectSizeBytes:
+	// 100 MiB.
+	DefaultMaxObjectSizeBytes int64 = 100 * 1024 * 1024
+
+	// DefaultMaxObjectSize is the default value for DataInitializerBuilder.MaxObjectSize: 100 MiB.
+	//
+	// Deprecated: Use [DefaultMaxObjectSizeBytes] instead.
+	DefaultMaxObjectSize = DefaultMaxObjectSizeBytes
 
 	// DefaultTimeout is the default value for DataInitializerBuilder.Timeout.
 	DefaultTimeout = 30 * time.Second
@@ -81,7 +87,7 @@ func newDataInitializerBuilder(bucket string, objectKeys []string) *DataInitiali
 	return &DataInitializerBuilder{
 		bucket:        bucket,
 		objectKeys:    objectKeys,
-		maxObjectSize: DefaultMaxObjectSize,
+		maxObjectSize: DefaultMaxObjectSizeBytes,
 		timeout:       DefaultTimeout,
 	}
 }
@@ -122,16 +128,24 @@ func (b *DataInitializerBuilder) S3Client(client S3Client) *DataInitializerBuild
 	return b
 }
 
-// MaxObjectSize specifies the maximum size in bytes of a single object's flag data. The limit
-// applies to each object separately, and to the decompressed content if an object is compressed.
-// Reading stops with an error if an object exceeds it.
+// MaxObjectSizeBytes specifies the maximum size in bytes of the object's flag data. The limit
+// applies to the decompressed content if the object is compressed. Reading stops with an error if
+// the object exceeds it.
 //
 // The limit exists so that a misconfigured object key cannot make the SDK buffer an arbitrarily
-// large download during startup. If this is not specified, the default is [DefaultMaxObjectSize].
-// The value must be greater than zero.
-func (b *DataInitializerBuilder) MaxObjectSize(limit int64) *DataInitializerBuilder {
+// large download during startup. If this is not specified, the default is
+// [DefaultMaxObjectSizeBytes]. The value must be greater than zero.
+func (b *DataInitializerBuilder) MaxObjectSizeBytes(limit int64) *DataInitializerBuilder {
 	b.maxObjectSize = limit
 	return b
+}
+
+// MaxObjectSize specifies the maximum size in bytes of the object's flag data.
+//
+// Deprecated: Use [DataInitializerBuilder.MaxObjectSizeBytes] instead. The two methods have the
+// same behavior.
+func (b *DataInitializerBuilder) MaxObjectSize(limit int64) *DataInitializerBuilder {
+	return b.MaxObjectSizeBytes(limit)
 }
 
 // Timeout specifies a time limit for the entire data-fetching operation, including reading every
