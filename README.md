@@ -1,15 +1,21 @@
 # LaunchDarkly Server-side SDK for Go - S3 data initializer
 
-> This repository is currently internal to LaunchDarkly. The library is not yet published or
-> supported for external use.
+[![Actions Status](https://github.com/launchdarkly/go-server-sdk-s3/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/launchdarkly/go-server-sdk-s3/actions/workflows/ci.yml)
+[![Documentation](https://img.shields.io/static/v1?label=go.dev&message=reference&color=00add8)](https://pkg.go.dev/github.com/launchdarkly/go-server-sdk-s3)
 
-This library provides an Amazon S3 data initializer for the [LaunchDarkly Go SDK](https://github.com/launchdarkly/go-server-sdk)'s data system. It reads one or more objects from an S3 bucket at SDK startup and uses their contents as the SDK's initial flag and segment data.
+> [!CAUTION]
+> This library is in pre-release and not subject to backward compatibility guarantees. The API may
+> change based on feedback.
+>
+> Pin to a specific minor version and review the [changelog](https://github.com/launchdarkly/go-server-sdk-s3/blob/main/CHANGELOG.md) before upgrading.
+
+This library provides an Amazon S3 data initializer for the [LaunchDarkly Go SDK](https://github.com/launchdarkly/go-server-sdk)'s data system. It reads one object from an S3 bucket at SDK startup and uses its contents as the SDK's initial flag and segment data.
 
 Initializers are one-shot: the SDK runs them once during startup to get flag values available as quickly as possible. Ongoing updates, if any, come from separately configured synchronizers. A typical use for this initializer is as a fallback tier so that an application can always start with a known-good flag snapshot, even when LaunchDarkly is unreachable.
 
 ## Requirements
 
-This library requires version 7.15.6 or higher of the LaunchDarkly Go SDK (the first release that includes the FDv2 data system's `subsystems.DataInitializer` interface), and Go 1.25 or higher.
+This library requires version 7.17.0 or higher of the LaunchDarkly Go SDK, and Go 1.25 or higher.
 
 ## Usage
 
@@ -50,7 +56,7 @@ lds3.DataInitializerForObject("my-bucket", "snapshot.json").S3Client(myS3Client)
 Two safety limits apply and can be adjusted:
 
 ```go
-// The whole fetch (all objects) must finish within this time; default 30s. The limit keeps a
+// The whole fetch must finish within this time; default 30s. The limit keeps a
 // slow S3 request from consuming the SDK's entire initialization wait budget. Zero disables it.
 lds3.DataInitializerForObject("my-bucket", "snapshot.json").Timeout(10 * time.Second)
 
@@ -59,11 +65,11 @@ lds3.DataInitializerForObject("my-bucket", "snapshot.json").Timeout(10 * time.Se
 lds3.DataInitializerForObject("my-bucket", "snapshot.json").MaxObjectSize(500 * 1024 * 1024)
 ```
 
-Objects may be gzip-compressed if their `Content-Encoding` metadata is set to `gzip`. An object that contains gzip data without that metadata is rejected with an explanatory error.
+The object may be gzip-compressed if its `Content-Encoding` metadata is set to `gzip`. An object that contains gzip data without that metadata is rejected with an explanatory error.
 
 ## Data format
 
-Objects must contain flag data in the same JSON or YAML document format used by the SDK's file data sources, with any combination of `flags` and `segments` properties:
+The object must contain flag data in the same JSON or YAML document format used by the SDK's file data sources, with any combination of `flags` and `segments` properties:
 
 ```json
 {
@@ -91,7 +97,7 @@ The initializer reads a single object per snapshot. Put the whole snapshot in on
 
 ## Initialization semantics
 
-Data loaded from S3 is a snapshot: it has no FDv2 payload state, so the SDK treats it as "cached" data rather than "refreshed" (current) data. As of Go SDK 7.17, applied snapshot data completes initialization: `MakeCustomClient` succeeds, `client.Initialized()` is true, and flag evaluations serve the snapshot values, while any configured synchronizers keep trying for current data in the background. (On earlier SDK versions, `MakeCustomClient` kept waiting for a synchronizer to reach fresh data and returned an initialization error if none could, even though the snapshot was applied and evaluations served it.)
+Data loaded from S3 is a snapshot: it has no FDv2 payload state, so the SDK treats it as "cached" data rather than "refreshed" (current) data. Applied snapshot data completes initialization: `MakeCustomClient` succeeds, `client.Initialized()` is true, and flag evaluations serve the snapshot values, while any configured synchronizers keep trying for current data in the background.
 
 Because of these semantics, place this initializer last in the initializer chain, after any initializers that can deliver current data from LaunchDarkly.
 
@@ -101,7 +107,7 @@ This library initializes once at startup. It does not watch S3 for changes or ac
 
 ## Contributing
 
-This repository is maintained by the LaunchDarkly SDK team. While the repository is internal, changes follow the same pull request and review process as our other SDK repositories.
+We encourage pull requests and other contributions from the community. Check out our [contributing guidelines](CONTRIBUTING.md) for instructions on how to contribute to this library.
 
 ## About LaunchDarkly
 
