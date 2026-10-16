@@ -156,16 +156,16 @@ func TestBuildRequiresBucketAndObjectKeys(t *testing.T) {
 }
 
 func TestBuildValidatesMaxObjectSizeAndTimeout(t *testing.T) {
-	_, err := DataInitializer("bucket", "key").MaxObjectSize(0).Build(subsystems.BasicClientContext{})
+	_, err := DataInitializer("bucket", "key").MaxObjectSizeBytes(0).Build(subsystems.BasicClientContext{})
 	assert.Error(t, err)
 
-	_, err = DataInitializer("bucket", "key").MaxObjectSize(-1).Build(subsystems.BasicClientContext{})
+	_, err = DataInitializer("bucket", "key").MaxObjectSizeBytes(-1).Build(subsystems.BasicClientContext{})
 	assert.Error(t, err)
 
 	_, err = DataInitializer("bucket", "key").Timeout(-time.Second).Build(subsystems.BasicClientContext{})
 	assert.Error(t, err)
 
-	_, err = DataInitializer("bucket", "key").MaxObjectSize(1024).Timeout(0).
+	_, err = DataInitializer("bucket", "key").MaxObjectSizeBytes(1024).Timeout(0).
 		Build(subsystems.BasicClientContext{})
 	assert.NoError(t, err)
 }
@@ -394,9 +394,9 @@ func TestFetchRejectsObjectOverSizeLimitByContentLength(t *testing.T) {
 			contentLength: aws.Int64(200),
 		},
 	}}
-	err := fetchError(t, DataInitializer("my-bucket", "flags.json").MaxObjectSize(100).S3Client(fake))
+	err := fetchError(t, DataInitializer("my-bucket", "flags.json").MaxObjectSizeBytes(100).S3Client(fake))
 	assert.Contains(t, err.Error(), "exceeds")
-	assert.Contains(t, err.Error(), "MaxObjectSize")
+	assert.Contains(t, err.Error(), "MaxObjectSizeBytes")
 }
 
 func TestFetchRejectsObjectOverSizeLimitWithUnderstatedContentLength(t *testing.T) {
@@ -405,7 +405,7 @@ func TestFetchRejectsObjectOverSizeLimitWithUnderstatedContentLength(t *testing.
 	fake := &fakeS3Client{objects: map[string]fakeObject{
 		"flags.json": {data: bigData, contentLength: aws.Int64(10)},
 	}}
-	err := fetchError(t, DataInitializer("my-bucket", "flags.json").MaxObjectSize(100).S3Client(fake))
+	err := fetchError(t, DataInitializer("my-bucket", "flags.json").MaxObjectSizeBytes(100).S3Client(fake))
 	assert.Contains(t, err.Error(), "exceeds")
 }
 
@@ -416,7 +416,7 @@ func TestFetchRejectsGzipObjectWhoseDecompressedContentExceedsLimit(t *testing.T
 		"flags.json.gz": {data: gzipCompress(t, document), contentEncoding: "gzip"},
 	}}
 	err := fetchError(t,
-		DataInitializer("my-bucket", "flags.json.gz").MaxObjectSize(1024).S3Client(fake))
+		DataInitializer("my-bucket", "flags.json.gz").MaxObjectSizeBytes(1024).S3Client(fake))
 	assert.Contains(t, err.Error(), "exceeds")
 }
 
@@ -424,9 +424,21 @@ func TestFetchAcceptsObjectWithinRaisedSizeLimit(t *testing.T) {
 	data := []byte(`{"flags": {"flag-a": {"key": "flag-a"}}}`)
 	fake := &fakeS3Client{objects: simpleObjects(map[string][]byte{"flags.json": data})}
 	initializer := buildInitializer(t,
-		DataInitializer("my-bucket", "flags.json").MaxObjectSize(int64(len(data))).S3Client(fake))
+		DataInitializer("my-bucket", "flags.json").MaxObjectSizeBytes(int64(len(data))).S3Client(fake))
 	basis := fetchBasis(t, initializer)
 	assert.Equal(t, []string{"flag-a"}, itemKeys(collectionByKind(t, basis, "features")))
+}
+
+func TestDeprecatedMaxObjectSizeBehavesLikeMaxObjectSizeBytes(t *testing.T) {
+	fake := &fakeS3Client{objects: map[string]fakeObject{
+		"flags.json": {
+			data:          []byte(`{"flags": {"flag-a": {"key": "flag-a"}}}`),
+			contentLength: aws.Int64(200),
+		},
+	}}
+	err := fetchError(t, DataInitializer("my-bucket", "flags.json").MaxObjectSize(100).S3Client(fake)) //nolint:staticcheck // Deprecated path under test.
+	assert.Contains(t, err.Error(), "exceeds the 100-byte limit")
+	assert.Equal(t, DefaultMaxObjectSizeBytes, DefaultMaxObjectSize) //nolint:staticcheck // Deprecated constant under test.
 }
 
 func TestFetchAcceptsObjectWhenMaxObjectSizeIsMaxInt64(t *testing.T) {
@@ -434,7 +446,7 @@ func TestFetchAcceptsObjectWhenMaxObjectSizeIsMaxInt64(t *testing.T) {
 		"flags.json": []byte(`{"flags": {"flag-a": {"key": "flag-a"}}}`),
 	})}
 	initializer := buildInitializer(t,
-		DataInitializer("my-bucket", "flags.json").MaxObjectSize(math.MaxInt64).S3Client(fake))
+		DataInitializer("my-bucket", "flags.json").MaxObjectSizeBytes(math.MaxInt64).S3Client(fake))
 	basis := fetchBasis(t, initializer)
 	assert.Equal(t, []string{"flag-a"}, itemKeys(collectionByKind(t, basis, "features")))
 }
@@ -449,7 +461,7 @@ func TestFetchRejectsObjectOneByteOverSizeLimit(t *testing.T) {
 	err := fetchError(t, DataInitializer("my-bucket", "flags.json").
 		MaxObjectSize(int64(len(data))-1).S3Client(fake))
 	assert.Contains(t, err.Error(), "exceeds")
-	assert.Contains(t, err.Error(), "MaxObjectSize")
+	assert.Contains(t, err.Error(), "MaxObjectSizeBytes")
 }
 
 func TestFetchReturnsErrorForMissingObject(t *testing.T) {

@@ -143,7 +143,7 @@ func (s *s3DataInitializer) readObject(
 
 	if output.ContentLength != nil && *output.ContentLength > s.maxObjectSize {
 		return document{}, fmt.Errorf(
-			"object %q in S3 bucket %q is %d bytes, which exceeds the %d-byte limit (the MaxObjectSize option can raise it)",
+			"object %q in S3 bucket %q is %d bytes, which exceeds the %d-byte limit (the MaxObjectSizeBytes option can raise it)",
 			objectKey, s.bucket, *output.ContentLength, s.maxObjectSize)
 	}
 
@@ -163,7 +163,7 @@ func (s *s3DataInitializer) readObject(
 	if err != nil {
 		if errors.Is(err, errObjectTooLarge) {
 			return document{}, fmt.Errorf(
-				"content of object %q in S3 bucket %q exceeds the %d-byte limit (the MaxObjectSize option can raise it)",
+				"content of object %q in S3 bucket %q exceeds the %d-byte limit (the MaxObjectSizeBytes option can raise it)",
 				objectKey, s.bucket, s.maxObjectSize)
 		}
 		return document{}, fmt.Errorf("unable to read object %q from S3 bucket %q: %w",

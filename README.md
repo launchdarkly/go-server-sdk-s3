@@ -60,9 +60,9 @@ Two safety limits apply and can be adjusted:
 // slow S3 request from consuming the SDK's entire initialization wait budget. Zero disables it.
 lds3.DataInitializerForObject("my-bucket", "snapshot.json").Timeout(10 * time.Second)
 
-// Each object's content (after decompression, if compressed) may be at most this many bytes;
-// default 100MB.
-lds3.DataInitializerForObject("my-bucket", "snapshot.json").MaxObjectSize(500 * 1024 * 1024)
+// The object's content (after decompression, if compressed) may be at most this many bytes;
+// default 100 MiB.
+lds3.DataInitializerForObject("my-bucket", "snapshot.json").MaxObjectSizeBytes(500 * 1024 * 1024)
 ```
 
 The object may be gzip-compressed if its `Content-Encoding` metadata is set to `gzip`. An object that contains gzip data without that metadata is rejected with an explanatory error.
