@@ -15,7 +15,7 @@ Initializers are one-shot: the SDK runs them once during startup to get flag val
 
 ## Requirements
 
-This library requires version 7.17.0 or higher of the LaunchDarkly Go SDK, and Go 1.25 or higher.
+This library requires version 7.17.0 or higher of the LaunchDarkly Go SDK, and Go 1.25 or higher. While Go 1.25 is the minimum, you should use the latest patched version of a supported Go release.
 
 ## Usage
 
